@@ -180,3 +180,17 @@ repository.
 The plugin is licensed under the [MIT License](LICENSE). Required notices for
 redot-cpp, libgit2, libssh2, OpenSSL, and their bundled components are in
 [`THIRDPARTY.md`](THIRDPARTY.md).
+
+## Notes
+
+I vibe coded this in GPT Sol 5.6. Use at your own risk. Actual programmers are welcome to submit PR's and feedback.
+
+## About Dominic Bytes
+
+Greetings! I am Dominic Bytes, the synth walker. I hail from the distant future. Where brains occupy robot bodies, time travel is a trip to the corner store, and the neon glow of our attire is powered by the light of our souls. Join me on a 1.21 gigawatt powered journey of chill vibes with gaming, anime, movies, and more!
+
+- [Website](https://dominicbytes.carrd.co/)
+- [X](https://x.com/DominicBytes)
+- [Twitch](https://www.twitch.tv/dominicbytes)
+- [YouTube](http://www.youtube.com/@DominicBytes)
+- [Kick](https://kick.com/dominicbytes)
