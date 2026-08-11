@@ -143,11 +143,13 @@ def audit_macos(path: Path) -> dict[str, object]:
     symbols = command("nm", ["-gU", str(path)])
     if not re.search(r"\b_git_plugin_init\b", symbols):
         raise RuntimeError("macOS binary does not export git_plugin_init")
-    dependencies = sorted(
+    dependencies = {
         line.strip().split()[0]
-        for line in linked.splitlines()[1:]
-        if line.strip()
-    )
+        for line in linked.splitlines()
+        if line[:1].isspace() and line.strip()
+    }
+    dependencies.discard(str(path))
+    dependencies = sorted(dependencies)
     unexpected = [
         dependency
         for dependency in dependencies

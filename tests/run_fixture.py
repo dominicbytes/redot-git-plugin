@@ -75,17 +75,20 @@ def main() -> int:
     parser.add_argument("--keep", action="store_true")
     arguments = parser.parse_args()
 
+    redot = arguments.redot.resolve()
+    provider = arguments.provider.resolve()
+
     root = Path(__file__).resolve().parents[1]
     fixture = root / "tests" / "fixture"
     temp_root = Path(tempfile.mkdtemp(prefix="redot-git-fixture-"))
     project = temp_root / "project"
     try:
         shutil.copytree(fixture, project)
-        install_provider(root, project, arguments.provider)
+        install_provider(root, project, provider)
         prepare_repository(project, arguments.git)
 
         import_command = [
-            str(arguments.redot),
+            str(redot),
             "--headless",
             "--editor",
             "--path",
@@ -98,7 +101,7 @@ def main() -> int:
         enable_provider(project)
 
         command = [
-            str(arguments.redot),
+            str(redot),
             "--headless",
             "--editor",
             "--path",
@@ -121,7 +124,7 @@ def main() -> int:
             "command": command,
             "import_command": import_command,
             "import_exit_code": import_process.returncode,
-            "provider_sha256": __import__("hashlib").sha256(arguments.provider.read_bytes()).hexdigest(),
+            "provider_sha256": __import__("hashlib").sha256(provider.read_bytes()).hexdigest(),
             "redot_exit_code": process.returncode,
             "result": result,
             "failures": failures,
