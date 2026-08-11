@@ -1,0 +1,399 @@
+#!/usr/bin/env python3
+"""Exercise provider endpoints through a test-only Redot binding."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Callable
+
+from provider_layout import install_provider
+
+
+RESULT_PREFIX = "REDOT_GIT_PROVIDER_TEST="
+Prepare = Callable[[Path, Path], None]
+
+
+def run(command: list[str], cwd: Path, timeout: int = 45) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+    )
+
+
+def checked(command: list[str], cwd: Path) -> None:
+    process = run(command, cwd)
+    if process.returncode:
+        raise RuntimeError(process.stderr.strip() or process.stdout.strip())
+
+
+def command_output(command: list[str], cwd: Path) -> str:
+    process = run(command, cwd)
+    if process.returncode:
+        raise RuntimeError(process.stderr.strip() or process.stdout.strip())
+    return process.stdout.strip()
+
+
+def install_fixture(root: Path, temp_root: Path, provider: Path) -> Path:
+    project = temp_root / "project with space-\u00e9"
+    shutil.copytree(root / "tests" / "fixture", project)
+    install_provider(root, project, provider)
+    return project
+
+
+def import_project(redot: Path, project: Path) -> subprocess.CompletedProcess[str]:
+    return run(
+        [str(redot), "--headless", "--editor", "--path", str(project), "--import", "--quit-after", "120"],
+        project,
+    )
+
+
+def initialize_repository(project: Path, git: str) -> None:
+    checked([git, "init", "--initial-branch=main"], project)
+    checked([git, "config", "user.name", "Redot Git Fixture"], project)
+    checked([git, "config", "user.email", "fixture@example.invalid"], project)
+
+
+def prepare_local(project: Path, temp_root: Path, git: str) -> None:
+    initialize_repository(project, git)
+    files = {
+        "tracked.txt": "baseline\n",
+        "discard.txt": "keep\n",
+        "unicode.txt": "caf\u00e9\n",
+    }
+    for name, contents in files.items():
+        (project / name).write_text(contents, encoding="utf-8", newline="\n")
+    checked([git, "add", *files], project)
+    checked([git, "commit", "-m", "Fixture baseline"], project)
+    (project / "tracked.txt").write_text("baseline\nchanged\n", encoding="utf-8", newline="\n")
+    (project / "discard.txt").write_text("discard me\n", encoding="utf-8", newline="\n")
+    (project / "untracked.txt").write_text("commit me\n", encoding="utf-8", newline="\n")
+    (project / "unstage.txt").write_text("stage cycle\n", encoding="utf-8", newline="\n")
+    checked([git, "init", "--bare", "--initial-branch=main", str(temp_root / "remote.git")], temp_root)
+
+
+def create_remote_base(project: Path, temp_root: Path, git: str) -> tuple[Path, Path]:
+    initialize_repository(project, git)
+    (project / "base.txt").write_text("base\n", encoding="utf-8", newline="\n")
+    checked([git, "add", "base.txt"], project)
+    checked([git, "commit", "-m", "Remote base"], project)
+
+    remote = temp_root / "remote.git"
+    checked([git, "init", "--bare", "--initial-branch=main", str(remote)], temp_root)
+    checked([git, "remote", "add", "origin", remote.as_posix()], project)
+    checked([git, "push", "--set-upstream", "origin", "main"], project)
+
+    peer = temp_root / "peer"
+    checked([git, "clone", remote.as_posix(), str(peer)], temp_root)
+    checked([git, "config", "user.name", "Remote Fixture"], peer)
+    checked([git, "config", "user.email", "remote@example.invalid"], peer)
+    return remote, peer
+
+
+def prepare_remote_fast_forward(project: Path, temp_root: Path, git: str) -> None:
+    _remote, peer = create_remote_base(project, temp_root, git)
+    (peer / "upstream.txt").write_text("from upstream\n", encoding="utf-8", newline="\n")
+    checked([git, "add", "upstream.txt"], peer)
+    checked([git, "commit", "-m", "Upstream fast-forward"], peer)
+    checked([git, "push", "origin", "main"], peer)
+
+
+def prepare_divergence(project: Path, temp_root: Path, git: str, conflict: bool = False) -> None:
+    _remote, peer = create_remote_base(project, temp_root, git)
+    if conflict:
+        (project / "conflict.txt").write_text("base\n", encoding="utf-8", newline="\n")
+        checked([git, "add", "conflict.txt"], project)
+        checked([git, "commit", "-m", "Conflict base"], project)
+        checked([git, "push", "origin", "main"], project)
+        checked([git, "pull", "--ff-only"], peer)
+        (project / "conflict.txt").write_text("local side\n", encoding="utf-8", newline="\n")
+        (peer / "conflict.txt").write_text("remote side\n", encoding="utf-8", newline="\n")
+        local_path = remote_path = "conflict.txt"
+    else:
+        (project / "local-side.txt").write_text("local side\n", encoding="utf-8", newline="\n")
+        (peer / "remote-side.txt").write_text("remote side\n", encoding="utf-8", newline="\n")
+        local_path, remote_path = "local-side.txt", "remote-side.txt"
+
+    checked([git, "add", local_path], project)
+    checked([git, "commit", "-m", "Local divergence"], project)
+    checked([git, "add", remote_path], peer)
+    checked([git, "commit", "-m", "Remote divergence"], peer)
+    checked([git, "push", "origin", "main"], peer)
+
+
+def prepare_security(project: Path, git: str) -> None:
+    initialize_repository(project, git)
+    (project / "security.txt").write_text("security baseline\n", encoding="utf-8", newline="\n")
+    checked([git, "add", "security.txt"], project)
+    checked([git, "commit", "-m", "Security baseline"], project)
+
+
+def prepare_edge_matrix(project: Path, git: str) -> None:
+    initialize_repository(project, git)
+    checked([git, "config", "user.name", "Jos\u00e9 Fixture"], project)
+    files = {
+        "modified.txt": "original\n",
+        "deleted.txt": "delete me\n",
+        "rename-old.txt": "rename me\n",
+        "staged-rename-old.txt": "stage rename me\n",
+        "binary.bin": b"\x00\x01baseline\x00",
+        "large.txt": "line\n" * 20000,
+    }
+    for name, contents in files.items():
+        path = project / name
+        if isinstance(contents, bytes):
+            path.write_bytes(contents)
+        else:
+            path.write_text(contents, encoding="utf-8", newline="\n")
+    checked([git, "add", *files], project)
+    checked([git, "commit", "-m", "Root caf\u00e9", "-m", "root body"], project)
+    (project / "second.txt").write_text("second\n", encoding="utf-8", newline="\n")
+    checked([git, "add", "second.txt"], project)
+    checked([git, "commit", "-m", "Second commit"], project)
+
+    (project / "modified.txt").write_text("original\nmodified\n", encoding="utf-8", newline="\n")
+    (project / "deleted.txt").unlink()
+    (project / "rename-old.txt").rename(project / "renamed.txt")
+    checked([git, "mv", "staged-rename-old.txt", "staged-renamed.txt"], project)
+    (project / "staged-new.txt").write_text("staged new\n", encoding="utf-8", newline="\n")
+    checked([git, "add", "staged-new.txt"], project)
+    (project / "binary.bin").write_bytes(b"\x00\x02changed\x00")
+    (project / "large.txt").write_text("line changed\n" + "line\n" * 19999, encoding="utf-8", newline="\n")
+    (project / "unicod\u00e9 file.txt").write_text("unicode path\n", encoding="utf-8", newline="\n")
+
+
+def prepare_detached(project: Path, git: str) -> None:
+    initialize_repository(project, git)
+    (project / "detached.txt").write_text("detached baseline\n", encoding="utf-8", newline="\n")
+    checked([git, "add", "detached.txt"], project)
+    checked([git, "commit", "-m", "Detached baseline"], project)
+    checked([git, "checkout", "--detach"], project)
+
+
+def parse_result(output: str) -> dict[str, object]:
+    for line in output.splitlines():
+        if line.startswith(RESULT_PREFIX):
+            return json.loads(line.removeprefix(RESULT_PREFIX))
+    raise ValueError("Redot did not emit the provider test marker")
+
+
+def run_scenario(redot: Path, project: Path, scenario: str) -> dict[str, object]:
+    command = [
+        str(redot),
+        "--headless",
+        "--editor",
+        "--path",
+        str(project),
+        "--script",
+        "res://provider_scenario.gd",
+        "--quit-after",
+        "180",
+        "--",
+        scenario,
+    ]
+    process = run(command, project)
+    output = process.stdout + process.stderr
+    result = parse_result(output)
+    return {
+        "command": command,
+        "exit_code": process.returncode,
+        "result": result,
+        "output": output,
+        "passed": process.returncode == 0 and result.get("passed") is True,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--redot", type=Path, required=True)
+    parser.add_argument("--provider", type=Path, required=True)
+    parser.add_argument("--git", default="git")
+    parser.add_argument("--keep", action="store_true")
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--verbose", action="store_true")
+    arguments = parser.parse_args()
+
+    root = Path(__file__).resolve().parents[1]
+    reports: list[dict[str, object]] = []
+    retained: list[Path] = []
+
+    def execute(scenario: str, prepare: Prepare | None = None) -> tuple[Path, Path, dict[str, object]]:
+        temp_root = Path(tempfile.mkdtemp(prefix=f"redot-git-{scenario}-"))
+        retained.append(temp_root)
+        project = install_fixture(root, temp_root, arguments.provider)
+        if prepare is not None:
+            prepare(project, temp_root)
+        import_process = import_project(arguments.redot, project)
+        report = run_scenario(arguments.redot, project, scenario)
+        report["import_exit_code"] = import_process.returncode
+        report["import_output"] = import_process.stdout + import_process.stderr
+        report["metadata_created"] = {
+            name: (project / name).exists() for name in (".git", ".gitignore", ".gitattributes")
+        }
+        if import_process.returncode:
+            report["passed"] = False
+        reports.append(report)
+        return temp_root, project, report
+
+    try:
+        execute("local", lambda project, temp_root: prepare_local(project, temp_root, arguments.git))
+
+        _root, _project, nonrepo_report = execute("nonrepo")
+        if any(nonrepo_report["metadata_created"].values()):
+            nonrepo_report["passed"] = False
+
+        _root, unborn_project, unborn_report = execute(
+            "unborn", lambda project, _temp_root: initialize_repository(project, arguments.git)
+        )
+        unborn_report["native_head"] = command_output([arguments.git, "rev-parse", "HEAD"], unborn_project)
+
+        _root, edge_project, edge_report = execute(
+            "edge", lambda project, _temp_root: prepare_edge_matrix(project, arguments.git)
+        )
+        edge_report["verification"] = {
+            "head_message": command_output([arguments.git, "log", "-1", "--format=%B"], edge_project),
+            "current_branch": command_output([arguments.git, "branch", "--show-current"], edge_project),
+        }
+        if edge_report["verification"]["head_message"] != "Provider caf\u00e9\nsecond line" or edge_report["verification"]["current_branch"] != "main":
+            edge_report["passed"] = False
+
+        _root, detached_project, detached_report = execute(
+            "detached", lambda project, _temp_root: prepare_detached(project, arguments.git)
+        )
+        detached_report["verification"] = {
+            "current_branch": command_output([arguments.git, "branch", "--show-current"], detached_project)
+        }
+        if detached_report["verification"]["current_branch"] != "main":
+            detached_report["passed"] = False
+
+        remote_root, remote_project, remote_report = execute(
+            "remote", lambda project, temp_root: prepare_remote_fast_forward(project, temp_root, arguments.git)
+        )
+        local_tip = command_output([arguments.git, "rev-parse", "HEAD"], remote_project)
+        bare_tip = command_output(
+            [arguments.git, "--git-dir", str(remote_root / "remote.git"), "rev-parse", "refs/heads/main"], remote_root
+        )
+        remote_report["verification"] = {"local_tip": local_tip, "remote_tip": bare_tip}
+        if local_tip != bare_tip:
+            remote_report["passed"] = False
+
+        for scenario, force_expected in (("reject", False), ("force", True)):
+            case_root, case_project, case_report = execute(
+                scenario, lambda project, temp_root: prepare_divergence(project, temp_root, arguments.git)
+            )
+            local_tip = command_output([arguments.git, "rev-parse", "HEAD"], case_project)
+            bare_tip = command_output(
+                [arguments.git, "--git-dir", str(case_root / "remote.git"), "rev-parse", "refs/heads/main"], case_root
+            )
+            case_report["verification"] = {"local_tip": local_tip, "remote_tip": bare_tip}
+            if (bare_tip == local_tip) is not force_expected:
+                case_report["passed"] = False
+
+        _root, merge_project, merge_report = execute(
+            "merge", lambda project, temp_root: prepare_divergence(project, temp_root, arguments.git)
+        )
+        merge_parents = command_output([arguments.git, "rev-list", "--parents", "-n", "1", "HEAD"], merge_project).split()
+        merge_report["verification"] = {"parent_count": len(merge_parents) - 1}
+        if len(merge_parents) != 3:
+            merge_report["passed"] = False
+
+        _root, conflict_project, conflict_report = execute(
+            "conflict", lambda project, temp_root: prepare_divergence(project, temp_root, arguments.git, conflict=True)
+        )
+        unmerged_before = command_output([arguments.git, "ls-files", "-u"], conflict_project)
+        conflict_report["verification"] = {
+            "merge_head_exists": (conflict_project / ".git" / "MERGE_HEAD").exists(),
+            "unmerged_entries": bool(unmerged_before),
+        }
+        if not all(conflict_report["verification"].values()):
+            conflict_report["passed"] = False
+
+        resolution_report = run_scenario(arguments.redot, conflict_project, "resolve")
+        resolution_parents = command_output(
+            [arguments.git, "rev-list", "--parents", "-n", "1", "HEAD"], conflict_project
+        ).split()
+        resolution_report["verification"] = {
+            "parent_count": len(resolution_parents) - 1,
+            "merge_head_exists": (conflict_project / ".git" / "MERGE_HEAD").exists(),
+            "unmerged_entries": bool(command_output([arguments.git, "ls-files", "-u"], conflict_project)),
+        }
+        if (
+            len(resolution_parents) != 3
+            or resolution_report["verification"]["merge_head_exists"]
+            or resolution_report["verification"]["unmerged_entries"]
+        ):
+            resolution_report["passed"] = False
+        reports.append(resolution_report)
+
+        _root, security_project, security_report = execute(
+            "security", lambda project, _temp_root: prepare_security(project, arguments.git)
+        )
+        sentinels = (
+            "sentinel-user-42",
+            "SENTINEL_PASSWORD_42",
+            "SENTINEL_PASSPHRASE_42",
+            "SENTINEL_URL_SECRET_42",
+            "SENTINEL_QUERY_SECRET_42",
+            "C:/sentinel/PUBLIC_KEY_42.pub",
+            "C:/sentinel/PRIVATE_KEY_42",
+        )
+        leaked = []
+        for path in security_project.rglob("*"):
+            if path.is_file():
+                data = path.read_bytes()
+                leaked.extend(f"{path}:{sentinel}" for sentinel in sentinels if sentinel.encode() in data)
+        combined_output = security_report["output"] + security_report["import_output"]
+        leaked.extend(f"output:{sentinel}" for sentinel in sentinels if sentinel in combined_output)
+        security_report["verification"] = {"sentinel_matches": leaked}
+        if leaked:
+            security_report["passed"] = False
+    finally:
+        if arguments.keep:
+            for path in retained:
+                print(f"Fixture retained at {path}", file=sys.stderr)
+        else:
+            for path in retained:
+                shutil.rmtree(path, ignore_errors=True)
+
+    summary = {
+        "provider_sha256": hashlib.sha256(arguments.provider.read_bytes()).hexdigest(),
+        "reports": reports,
+        "passed": all(report["passed"] for report in reports),
+    }
+    serialized = json.dumps(summary, indent=2, ensure_ascii=False)
+    if arguments.output:
+        arguments.output.parent.mkdir(parents=True, exist_ok=True)
+        arguments.output.write_text(serialized + "\n", encoding="utf-8", newline="\n")
+    if arguments.verbose:
+        print(serialized)
+    else:
+        compact = {
+            "provider_sha256": summary["provider_sha256"],
+            "passed": summary["passed"],
+            "reports": [
+                {
+                    "scenario": report["result"].get("scenario"),
+                    "passed": report["passed"],
+                    "exit_code": report["exit_code"],
+                    "verification": report.get("verification"),
+                }
+                for report in reports
+            ],
+        }
+        print(json.dumps(compact, indent=2, ensure_ascii=False))
+    return 0 if summary["passed"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

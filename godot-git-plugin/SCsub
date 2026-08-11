@@ -22,17 +22,27 @@ if env["platform"] == "macos":
                               env["macos_deployment_target"]])
 elif env["platform"] == "windows":
     env.Append(LIBS=["advapi32", "winhttp", "rpcrt4", "crypt32",
-               "ole32", "user32", "wsock32", "ws2_32", "bcrypt"])
+                    "ole32", "user32", "wsock32", "ws2_32", "bcrypt"])
+
+source_root = Dir("#").abspath
+if env.get("is_msvc", False):
+    env.AppendUnique(CCFLAGS=["/experimental:deterministic", "/pathmap:{}=.".format(source_root)])
+    env.AppendUnique(LINKFLAGS=["/Brepro"])
+else:
+    env.AppendUnique(CCFLAGS=[
+        "-ffile-prefix-map={}=.".format(source_root),
+        "-fdebug-prefix-map={}=.".format(source_root),
+    ])
 
 env.Append(CPPPATH=[".", "src/"])
 
 env.Append(CPPPATH=["#thirdparty/git2/libgit2/include/"])
 
 lib_sources = Glob("src/*.cpp")
-env.Depends(lib_sources, ssl)
 library = env.SharedLibrary(
     target=env["target_path"] +
     "{}{}{}".format(env["target_name"], env["suffix"], env["SHLIBSUFFIX"]),
     source=lib_sources
 )
+env.Depends(library, ssl)
 Default(library)

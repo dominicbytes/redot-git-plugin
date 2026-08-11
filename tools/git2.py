@@ -21,13 +21,12 @@ def build_library(env, deps):
         "REGEX_BACKEND": "builtin",
         "BUILD_SHARED_LIBS": 0,
         "LINK_WITH_STATIC_LIBRARIES": 1,
+        "CMAKE_POLICY_VERSION_MINIMUM": "3.10",
         "LIBSSH2_INCLUDE_DIRS": env.Dir("#thirdparty/ssh2/libssh2/include").abspath,
         "LIBSSH2_RESOLVED": deps[-1].abspath,
         "LIBSSH2_LIBRARIES": "LIBSSH2",
         "LIBSSH2_FOUND": 1,
-        "USE_WINHTTP": 0,
         "STATIC_CRT": env.get("use_static_cpp", True),
-        "CMAKE_DISABLE_FIND_PACKAGE_ZLIB": 1,
     }
 
     if env["platform"] != "windows":
@@ -50,6 +49,7 @@ def build_library(env, deps):
         cmake_outputs=libs,
         cmake_targets=[],
         dependencies=deps,
+        languages=["C"],
     )
 
     env.Append(CPPPATH=["#thirdparty/git2/libgit2/include"])

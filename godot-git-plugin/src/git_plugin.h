@@ -16,6 +16,14 @@ struct Credentials {
 	godot::String ssh_public_key_path;
 	godot::String ssh_private_key_path;
 	godot::String ssh_passphrase;
+
+	void clear() {
+		username = godot::String();
+		password = godot::String();
+		ssh_public_key_path = godot::String();
+		ssh_private_key_path = godot::String();
+		ssh_passphrase = godot::String();
+	}
 };
 
 class GitPlugin : public godot::EditorVCSInterface {
@@ -27,6 +35,7 @@ protected:
 public:
 	Credentials creds;
 	bool has_merge = false;
+	bool libgit2_initialized = false;
 	git_repository_ptr repo;
 	git_oid pull_merge_oid = {};
 	godot::String repo_project_path;
@@ -62,6 +71,9 @@ public:
 	// Helpers
 	godot::TypedArray<godot::Dictionary> _parse_diff(git_diff *p_diff);
 	bool check_errors(int error, godot::String function, godot::String file, int line, godot::String message, const std::vector<git_error_code> &ignores = {});
-	void create_gitignore_and_gitattributes();
-	bool create_initial_commit();
+#ifdef REDOT_GIT_TEST_HARNESS
+	godot::String test_sanitize_output(const godot::String &text);
+	bool test_credentials_empty() const;
+	bool test_set_ca_certificate(const godot::String &path);
+#endif
 };

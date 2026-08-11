@@ -273,31 +273,66 @@ def generate(env):
 
     env["SSL_SOURCE"] = env.Dir(env["openssl_source"]).abspath
     env["SSL_BUILD"] = env.Dir(env["openssl_build"] + "/{}/{}".format(env["platform"], env["arch"])).abspath
-    env["SSL_INSTALL"] = env.Dir(env["SSL_BUILD"] + "/dest").abspath
+    env["SSL_DESTDIR"] = env.Dir(env["SSL_BUILD"] + "/dest").abspath
+    env["SSL_INSTALL"] = env.Dir(env["SSL_DESTDIR"] + "/redot-git-plugin/openssl").abspath
     env["SSL_INCLUDE"] = env.Dir(env["SSL_INSTALL"] + "/include").abspath
     lib_ext = ".lib" if env.get("is_msvc", False) else ".a"
     env["SSL_LIBRARY"] = env.File(env["SSL_BUILD"] + "/libssl" + lib_ext)
     env["SSL_CRYPTO_LIBRARY"] = env.File(env["SSL_BUILD"] + "/libcrypto" + lib_ext)
     env["SSL_LIBS"] = [env["SSL_LIBRARY"], env["SSL_CRYPTO_LIBRARY"]]
 
+    source_root = env.Dir("#").abspath
+    env["ENV"]["SOURCE_DATE_EPOCH"] = env["ENV"].get("SOURCE_DATE_EPOCH") or "1785436021"
+    if env.get("is_msvc", False):
+        # Keep this in CL rather than OpenSSL's Configure arguments. MSVC still
+        # maps __FILE__, while OpenSSL's generated compiler-flags string stays
+        # independent of the build root.
+        compiler_flags = '/experimental:deterministic "/pathmap:{}=."'.format(source_root.replace("\\", "/"))
+        env["ENV"]["CL"] = "{} {}".format(env["ENV"].get("CL", ""), compiler_flags).strip()
+        env["ENV"]["TERM"] = env["ENV"].get("TERM") or "vt100"
+        reproducible_flags = []
+        install_prefix = "C:/redot-git-plugin/openssl"
+        openssl_dir = "C:/redot-git-plugin/ssl"
+    else:
+        # OpenSSL records Configure-supplied C flags in its public version
+        # string. Its generated makefiles already compile source through
+        # relative paths, so injecting an absolute prefix-map here would leak
+        # the checkout root without improving the release binary.
+        reproducible_flags = []
+        install_prefix = "/redot-git-plugin/openssl"
+        openssl_dir = "/redot-git-plugin/ssl"
+
     # Configure action
     env["PERL"] = env.get("PERL", "perl")
     env["_ssl_configure_args"] = ssl_configure_args
     env["SSLPLATFORMCONFIG"] = "${_ssl_configure_args(__env__)}"
-    env["SSLCONFFLAGS"] = SCons.Util.CLVar("")
+    env["SSLCONFFLAGS"] = reproducible_flags
     # fmt: off
-    env["SSLCONFIGCOM"] = 'cd ${TARGET.dir} && $PERL -- ${SOURCE.abspath} --prefix="${SSL_INSTALL}" --openssldir="${SSL_INSTALL}" $SSLPLATFORMCONFIG $SSLCONFFLAGS'
+    # SOURCE is a SCons node, so its command-line expansion already handles
+    # quoting. Adding another quote pair breaks checkouts whose paths contain
+    # spaces (for example, `perl -- ""D:\\Project Root\\Configure""`).
+    configure_command = '$PERL -- ${SOURCE.abspath} --prefix="%s" --openssldir="%s" $SSLPLATFORMCONFIG $SSLCONFFLAGS' % (install_prefix, openssl_dir)
+    if env.get("is_msvc", False):
+        env["SSLCONFIGCOM"] = 'cd /D "$SSL_BUILD" && ' + configure_command
+    else:
+        # SCons may execute command actions without a shell on POSIX. Invoke
+        # one explicitly because OpenSSL's Configure writes to its current
+        # directory and `cd` is a shell builtin.
+        env["SSLCONFIGCOM"] = "sh -c 'cd \"$SSL_BUILD\" && " + configure_command + "'"
     # fmt: on
 
     # Build action
     env["SSLBUILDJOBS"] = "${__env__.GetOption('num_jobs')}"
     # fmt: off
-    env["SSLBUILDCOM"] = "make -j$SSLBUILDJOBS -C ${TARGET.dir} && make -j$SSLBUILDJOBS -C ${TARGET.dir} install_sw install_ssldirs"
+    env["SSLBUILDCOM"] = "sh -c 'make -j$SSLBUILDJOBS -C \"$SSL_BUILD\" && make -j$SSLBUILDJOBS -C \"$SSL_BUILD\" DESTDIR=\"${SSL_DESTDIR}\" install_sw install_ssldirs'"
     # fmt: on
 
     # Windows MSVC needs to build using NMake
     if env["platform"] == "windows" and env.get("is_msvc", False):
-        env["SSLBUILDCOM"] = "cd ${TARGET.dir} && nmake install_sw install_ssldirs"
+        # The provider only needs the development libraries and headers. Avoid
+        # install_sw (the unused CLI) and install_ssldirs (runtime config and
+        # scripts); both trigger unnecessary generated targets on newer NMake.
+        env["SSLBUILDCOM"] = 'cd /D "$SSL_BUILD" && nmake "DESTDIR=${SSL_DESTDIR}" install_dev'
 
     env["BUILDERS"]["OpenSSLBuilder"] = SCons.Builder.Builder(generator=ssl_generator, emitter=ssl_emitter)
     env.AddMethod(build_openssl, "OpenSSL")

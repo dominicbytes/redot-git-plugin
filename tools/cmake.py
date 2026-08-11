@@ -12,7 +12,8 @@ def get_ndk_version(env):
     return env["ndk_version"]
 
 
-def cmake_default_flags(env):
+def cmake_default_flags(env, languages=None):
+    languages = languages or ["C", "CXX"]
     if env.get("cmake_default_flags", ""):
         return shlex.split(env["cmake_default_flags"])
 
@@ -26,9 +27,9 @@ def cmake_default_flags(env):
     if env.get("lto", "none") != "none":
         config["CMAKE_INTERPROCEDURAL_OPTIMIZATION"] = "1"
 
-    if "CC" in env:
+    if "C" in languages and "CC" in env:
         config["CMAKE_C_COMPILER"] = env["CC"] if os.name != "nt" else env.subst("$CC").replace("\\", "/") + ".exe"
-    if "CXX" in env:
+    if "CXX" in languages and "CXX" in env:
         config["CMAKE_CXX_COMPILER"] = env["CXX"] if os.name != "nt" else env.subst("$CXX").replace("\\", "/") + ".exe"
     if "RC" in env:
         config["CMAKE_RC_COMPILER"] = env["RC"] if os.name != "nt" else env.subst("$RC").replace("\\", "/") + ".exe"
@@ -101,6 +102,18 @@ def cmake_default_flags(env):
                 else:
                     config["CMAKE_MSVC_RUNTIME_LIBRARY"] = "MultiThreadedDLL"
 
+    source_root = env.Dir("#").abspath
+    if env.get("is_msvc", False):
+        # Preserve the quotes as part of CMAKE_<LANG>_FLAGS so NMake does not
+        # split a mapped source root that contains spaces.
+        reproducible_flags = '/experimental:deterministic /pathmap:\\"{}\\"=.'.format(source_root.replace("\\", "/"))
+    else:
+        reproducible_flags = "-ffile-prefix-map={}=. -fdebug-prefix-map={}=.".format(source_root, source_root)
+
+    for language in languages:
+        key = "CMAKE_{}_FLAGS".format(language)
+        config[key] = "{} {}".format(config.get(key, ""), reproducible_flags).strip()
+
     return ["-D%s=%s" % it for it in config.items()]
 
 
@@ -124,14 +137,22 @@ def cmake_generator(target, source, env, for_signature):
 
 
 def cmake_build(
-    env, target_dir, source_dir, cmake_outputs=[], cmake_targets=[], cmake_options=[], dependencies=[], install=False
+    env,
+    target_dir,
+    source_dir,
+    cmake_outputs=[],
+    cmake_targets=[],
+    cmake_options=[],
+    dependencies=[],
+    install=False,
+    languages=None,
 ):
     cmake_env = env.Clone()
     target = env.Dir("{}/{}/{}".format(target_dir, env["platform"], env["arch"]))
     source = env.Dir(source_dir)
     builder_targets = [target] + [str(target) + "/" + f for f in cmake_outputs]
     builder_sources = [source] + dependencies
-    default_flags = cmake_default_flags(env)
+    default_flags = cmake_default_flags(env, languages)
 
     # Merge flags
     flags = []
@@ -164,6 +185,10 @@ def cmake_build(
     cmake_env.Append(CMAKECONFFLAGS=flags)
     if len(cmake_targets) > 0:
         cmake_env.Append(CMAKEBUILDFLAGS=["-t"] + [t for t in cmake_targets])
+    generator = env.get("cmake_generator", "")
+    uses_nmake = env["platform"] == "windows" and env.msvc and generator in ["", "NMake Makefiles"]
+    if not uses_nmake:
+        cmake_env.Append(CMAKEBUILDFLAGS=["-j$CMAKEBUILDJOBS"])
     cmake_env["CMAKE_INSTALL"] = install
     return cmake_env.CMake(builder_targets, builder_sources)
 
@@ -183,15 +208,17 @@ def generate(env):
     env["CMAKE"] = env["cmake"]
     env["EMCMAKE"] = env["emcmake"]
     env["CMAKECONFFLAGS"] = SCons.Util.CLVar("")
-    env["CMAKECONFCOM"] = "$CMAKE -B ${TARGET.dir} $CMAKECONFFLAGS ${SOURCE.dir}"
+    # TARGET and SOURCE are SCons nodes; their expansion already applies the
+    # platform's command-line quoting rules.
+    env["CMAKECONFCOM"] = "$CMAKE -B ${TARGET.dir.abspath} $CMAKECONFFLAGS ${SOURCE.dir.abspath}"
     if env.get("platform", "") == "web":
         env["CMAKECONFCOM"] = "$EMCMAKE " + env["CMAKECONFCOM"]
 
     env["CMAKEBUILDJOBS"] = "${__env__.GetOption('num_jobs')}"
     env["CMAKEBUILDFLAGS"] = SCons.Util.CLVar("")
     env["CMAKEINSTALLFLAGS"] = SCons.Util.CLVar("")
-    env["CMAKEBUILDCOM"] = "$CMAKE --build ${TARGET.dir} $CMAKEBUILDFLAGS -j$CMAKEBUILDJOBS"
-    env["CMAKEINSTALLCOM"] = "$CMAKE --install ${TARGET.dir} $CMAKEINSTALLFLAGS"
+    env["CMAKEBUILDCOM"] = "$CMAKE --build ${TARGET.dir.abspath} $CMAKEBUILDFLAGS"
+    env["CMAKEINSTALLCOM"] = "$CMAKE --install ${TARGET.dir.abspath} $CMAKEINSTALLFLAGS"
     env["BUILDERS"]["CMake"] = SCons.Builder.Builder(generator=cmake_generator, emitter=cmake_emitter)
     env["CMAKELOCK"] = "#bin/cmake.lock"
     env.AddMethod(cmake_build, "CMakeBuild")

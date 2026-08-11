@@ -1,20 +1,24 @@
 # Third-Party Notices
 
-The Godot Git Plugin source code uses the following third-party source code:
+The Redot Git Plugin source code uses the following third-party source code:
 
-1. godotengine/godot-cpp - MIT License - https://github.com/godotengine/godot-cpp/tree/58d1de720b8ffe9f8ffcdfe3a85148582cfd2e74
+1. Redot-Engine/redot-cpp - MIT License - https://github.com/Redot-Engine/redot-cpp/tree/598ec78e86b2c240a023f6de13daba70f7de8610
 2. libgit2/libgit2 - GPLv2 with a special Linking Exception - https://github.com/libgit2/libgit2/tree/26055f5af74ab1cf636d272e8a34315496d3f06f
-3. libssh2/libssh2 - BSD-3-Clause License - https://github.com/libssh2/libssh2/tree/635caa90787220ac3773c1d5ba11f1236c22eae8
-4. openssl - OpenSSL License - https://github.com/openssl/openssl/tree/aae016bfd52fcad2bc9657c2c782cfdf73b1ed5f
+3. libssh2/libssh2 - BSD-3-Clause License - https://github.com/libssh2/libssh2/tree/1c3f1b7da588f2652260285529ec3c1f1125eb4e
+4. OpenSSL 3.6.3 - Apache License 2.0 - https://github.com/openssl/openssl/tree/aae016bfd52fcad2bc9657c2c782cfdf73b1ed5f
+
+The complete Apache License 2.0 text shipped by the pinned OpenSSL source is
+included in `LICENSES/OpenSSL-Apache-2.0.txt` and in every release archive.
 
 ## License Texts
 
-### godotengine/godot-cpp
+### Redot-Engine/redot-cpp
 
 ```
 # MIT License
 
-Copyright (c) 2017-2022 Godot Engine contributors.
+Copyright (c) 2024-present Redot Engine contributors
+Copyright (c) 2017-present Godot Engine contributors.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -1216,7 +1220,11 @@ OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 ```
 
-### OpenSSL
+### Legacy OpenSSL/SSLeay notices
+
+These legacy notices are retained from the upstream plugin's bundled
+third-party notice for compatibility material. The directly linked OpenSSL
+3.6.3 source is licensed under Apache-2.0 as stated above.
 
 ```
 

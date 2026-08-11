@@ -1,7 +1,5 @@
 #include "git_plugin.h"
 
-#include <cstring>
-
 #include <git2/tree.h>
 #include "godot_cpp/core/class_db.hpp"
 #include "godot_cpp/classes/file_access.hpp"
@@ -33,8 +31,51 @@
 #define COMMA ,
 
 void GitPlugin::_bind_methods() {
-	// Doesn't seem to require binding functions for now
+#ifdef REDOT_GIT_TEST_HARNESS
+	using namespace godot;
+	ClassDB::bind_method(D_METHOD("test_initialize", "project_path"), &GitPlugin::_initialize);
+	ClassDB::bind_method(D_METHOD("test_set_credentials", "username", "password", "ssh_public_key_path", "ssh_private_key_path", "ssh_passphrase"), &GitPlugin::_set_credentials);
+	ClassDB::bind_method(D_METHOD("test_get_modified_files_data"), &GitPlugin::_get_modified_files_data);
+	ClassDB::bind_method(D_METHOD("test_stage_file", "file_path"), &GitPlugin::_stage_file);
+	ClassDB::bind_method(D_METHOD("test_unstage_file", "file_path"), &GitPlugin::_unstage_file);
+	ClassDB::bind_method(D_METHOD("test_discard_file", "file_path"), &GitPlugin::_discard_file);
+	ClassDB::bind_method(D_METHOD("test_commit", "message"), &GitPlugin::_commit);
+	ClassDB::bind_method(D_METHOD("test_get_diff", "identifier", "area"), &GitPlugin::_get_diff);
+	ClassDB::bind_method(D_METHOD("test_shutdown"), &GitPlugin::_shut_down);
+	ClassDB::bind_method(D_METHOD("test_get_vcs_name"), &GitPlugin::_get_vcs_name);
+	ClassDB::bind_method(D_METHOD("test_get_previous_commits", "max_commits"), &GitPlugin::_get_previous_commits);
+	ClassDB::bind_method(D_METHOD("test_get_branch_list"), &GitPlugin::_get_branch_list);
+	ClassDB::bind_method(D_METHOD("test_get_remotes"), &GitPlugin::_get_remotes);
+	ClassDB::bind_method(D_METHOD("test_create_branch", "branch_name"), &GitPlugin::_create_branch);
+	ClassDB::bind_method(D_METHOD("test_remove_branch", "branch_name"), &GitPlugin::_remove_branch);
+	ClassDB::bind_method(D_METHOD("test_create_remote", "remote_name", "remote_url"), &GitPlugin::_create_remote);
+	ClassDB::bind_method(D_METHOD("test_remove_remote", "remote_name"), &GitPlugin::_remove_remote);
+	ClassDB::bind_method(D_METHOD("test_get_current_branch_name"), &GitPlugin::_get_current_branch_name);
+	ClassDB::bind_method(D_METHOD("test_checkout_branch", "branch_name"), &GitPlugin::_checkout_branch);
+	ClassDB::bind_method(D_METHOD("test_pull", "remote"), &GitPlugin::_pull);
+	ClassDB::bind_method(D_METHOD("test_push", "remote", "force"), &GitPlugin::_push);
+	ClassDB::bind_method(D_METHOD("test_fetch", "remote"), &GitPlugin::_fetch);
+	ClassDB::bind_method(D_METHOD("test_get_line_diff", "file_path", "text"), &GitPlugin::_get_line_diff);
+	ClassDB::bind_method(D_METHOD("test_sanitize_output", "text"), &GitPlugin::test_sanitize_output);
+	ClassDB::bind_method(D_METHOD("test_credentials_empty"), &GitPlugin::test_credentials_empty);
+	ClassDB::bind_method(D_METHOD("test_set_ca_certificate", "path"), &GitPlugin::test_set_ca_certificate);
+#endif
 }
+
+#ifdef REDOT_GIT_TEST_HARNESS
+godot::String GitPlugin::test_sanitize_output(const godot::String &text) {
+	return sanitize_git_output(text, &creds);
+}
+
+bool GitPlugin::test_credentials_empty() const {
+	return creds.username.is_empty() && creds.password.is_empty() && creds.ssh_public_key_path.is_empty() && creds.ssh_private_key_path.is_empty() && creds.ssh_passphrase.is_empty();
+}
+
+bool GitPlugin::test_set_ca_certificate(const godot::String &path) {
+	const godot::CharString encoded_path = path.utf8();
+	return git_libgit2_opts(GIT_OPT_SET_SSL_CERT_LOCATIONS, encoded_path.get_data(), nullptr) == 0;
+}
+#endif
 
 GitPlugin::GitPlugin() {
 	map_changes[GIT_STATUS_WT_NEW] = CHANGE_TYPE_NEW;
@@ -69,11 +110,12 @@ bool GitPlugin::check_errors(int error, godot::String function, godot::String fi
 		message = message + godot::String::utf8(lg2err->message);
 	}
 
-	godot::UtilityFunctions::push_error("GitPlugin: ", message, " in ", file, ":", function, "#L", line);
+	godot::UtilityFunctions::push_error("GitPlugin: ", sanitize_git_output(message, &creds), " in ", file, ":", function, "#L", line);
 	return true;
 }
 
 void GitPlugin::_set_credentials(const godot::String &username, const godot::String &password, const godot::String &ssh_public_key_path, const godot::String &ssh_private_key_path, const godot::String &ssh_passphrase) {
+	creds.clear();
 	creds.username = username;
 	creds.password = password;
 	creds.ssh_public_key_path = ssh_public_key_path;
@@ -186,49 +228,40 @@ void GitPlugin::_unstage_file(const godot::String &file_path) {
 	}
 }
 
-void GitPlugin::create_gitignore_and_gitattributes() {
-	if (!godot::FileAccess::file_exists(repo_project_path + "/.gitignore")) {
-		godot::Ref<godot::FileAccess> file = godot::FileAccess::open(repo_project_path + "/.gitignore", godot::FileAccess::ModeFlags::WRITE);
-		ERR_FAIL_COND(file.is_null());
-		file->store_string(
-				"# Godot 4+ specific ignores\n"
-				".godot/\n");
-	}
-
-	if (!godot::FileAccess::file_exists(repo_project_path + "/.gitattributes")) {
-		godot::Ref<godot::FileAccess> file = godot::FileAccess::open(repo_project_path + "/.gitattributes", godot::FileAccess::ModeFlags::WRITE);
-		ERR_FAIL_COND(file.is_null());
-		file->store_string(
-				"# Set the default behavior, in case people don't have core.autocrlf set.\n"
-				"* text=auto\n\n"
-
-				"# Explicitly declare text files you want to always be normalized and converted\n"
-				"# to native line endings on checkout.\n"
-				"*.cpp text\n"
-				"*.c text\n"
-				"*.h text\n"
-				"*.gd text\n"
-				"*.cs text\n\n"
-
-				"# Declare files that will always have CRLF line endings on checkout.\n"
-				"*.sln text eol=crlf\n\n"
-
-				"# Denote all files that are truly binary and should not be modified.\n"
-				"*.png binary\n"
-				"*.jpg binary\n");
-	}
-}
-
 godot::TypedArray<godot::Dictionary> GitPlugin::_get_modified_files_data() {
 	godot::TypedArray<godot::Dictionary> stats_files;
 
 	git_status_options opts = GIT_STATUS_OPTIONS_INIT;
 	opts.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
 	opts.flags = GIT_STATUS_OPT_EXCLUDE_SUBMODULES;
-	opts.flags |= GIT_STATUS_OPT_INCLUDE_UNTRACKED | GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX | GIT_STATUS_OPT_SORT_CASE_SENSITIVELY | GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS;
+	opts.flags |= GIT_STATUS_OPT_INCLUDE_UNTRACKED | GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX | GIT_STATUS_OPT_RENAMES_INDEX_TO_WORKDIR | GIT_STATUS_OPT_SORT_CASE_SENSITIVELY | GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS;
 
 	git_status_list_ptr statuses;
 	GIT2_CALL_R(git_status_list_new(Capture(statuses), repo.get(), &opts), "Could not get status information from repository", godot::TypedArray<godot::Dictionary>());
+
+	const static int git_status_wt = GIT_STATUS_WT_NEW | GIT_STATUS_WT_MODIFIED | GIT_STATUS_WT_DELETED | GIT_STATUS_WT_TYPECHANGE | GIT_STATUS_WT_RENAMED | GIT_STATUS_CONFLICTED;
+	const static int git_status_index = GIT_STATUS_INDEX_NEW | GIT_STATUS_INDEX_MODIFIED | GIT_STATUS_INDEX_DELETED | GIT_STATUS_INDEX_RENAMED | GIT_STATUS_INDEX_TYPECHANGE;
+	const auto change_type_for_status = [this](git_status_t status) {
+		const git_status_t precedence[] = {
+			GIT_STATUS_CONFLICTED,
+			GIT_STATUS_WT_RENAMED,
+			GIT_STATUS_INDEX_RENAMED,
+			GIT_STATUS_WT_NEW,
+			GIT_STATUS_INDEX_NEW,
+			GIT_STATUS_WT_DELETED,
+			GIT_STATUS_INDEX_DELETED,
+			GIT_STATUS_WT_TYPECHANGE,
+			GIT_STATUS_INDEX_TYPECHANGE,
+			GIT_STATUS_WT_MODIFIED,
+			GIT_STATUS_INDEX_MODIFIED,
+		};
+		for (const git_status_t flag : precedence) {
+			if (status & flag) {
+				return map_changes.at(flag);
+			}
+		}
+		return CHANGE_TYPE_MODIFIED;
+	};
 
 	size_t count = git_status_list_entrycount(statuses.get());
 	for (size_t i = 0; i < count; ++i) {
@@ -240,11 +273,8 @@ godot::TypedArray<godot::Dictionary> GitPlugin::_get_modified_files_data() {
 			path = godot::String::utf8(entry->head_to_index->new_file.path);
 		}
 
-		const static int git_status_wt = GIT_STATUS_WT_NEW | GIT_STATUS_WT_MODIFIED | GIT_STATUS_WT_DELETED | GIT_STATUS_WT_TYPECHANGE | GIT_STATUS_WT_RENAMED | GIT_STATUS_CONFLICTED;
-		const static int git_status_index = GIT_STATUS_INDEX_NEW | GIT_STATUS_INDEX_MODIFIED | GIT_STATUS_INDEX_DELETED | GIT_STATUS_INDEX_RENAMED | GIT_STATUS_INDEX_TYPECHANGE;
-
 		if (entry->status & git_status_wt) {
-			stats_files.push_back(create_status_file(path, map_changes[git_status_t(entry->status & git_status_wt)], TREE_AREA_UNSTAGED));
+			stats_files.push_back(create_status_file(path, change_type_for_status(git_status_t(entry->status & git_status_wt)), TREE_AREA_UNSTAGED));
 		}
 
 		if (entry->status & git_status_index) {
@@ -253,7 +283,7 @@ godot::TypedArray<godot::Dictionary> GitPlugin::_get_modified_files_data() {
 				stats_files.push_back(create_status_file(old_path, map_changes.at(GIT_STATUS_INDEX_DELETED), TREE_AREA_STAGED));
 				stats_files.push_back(create_status_file(path, map_changes.at(GIT_STATUS_INDEX_NEW), TREE_AREA_STAGED));
 			} else {
-				stats_files.push_back(create_status_file(path, map_changes.at(git_status_t(entry->status & git_status_index)), TREE_AREA_STAGED));
+				stats_files.push_back(create_status_file(path, change_type_for_status(git_status_t(entry->status & git_status_index)), TREE_AREA_STAGED));
 			}
 		}
 	}
@@ -263,13 +293,19 @@ godot::TypedArray<godot::Dictionary> GitPlugin::_get_modified_files_data() {
 
 godot::TypedArray<godot::String> GitPlugin::_get_branch_list() {
 	git_branch_iterator_ptr it;
-	GIT2_CALL_R(git_branch_iterator_new(Capture(it), repo.get(), GIT_BRANCH_LOCAL), "Could not create branch iterator", godot::TypedArray<godot::Dictionary>());
+	GIT2_CALL_R(git_branch_iterator_new(Capture(it), repo.get(), GIT_BRANCH_LOCAL), "Could not create branch iterator", godot::TypedArray<godot::String>());
 
 	godot::TypedArray<godot::String> branch_names;
 
 	git_reference_ptr ref;
 	git_branch_t type;
-	while (git_branch_next(Capture(ref), &type, it.get()) != GIT_ITEROVER) {
+	while (true) {
+		const int next_error = git_branch_next(Capture(ref), &type, it.get());
+		if (next_error == GIT_ITEROVER) {
+			break;
+		}
+		GIT2_CALL_R(next_error, "Could not read the next branch", godot::TypedArray<godot::String>());
+
 		const char *name = nullptr;
 
 		GIT2_CALL_R(git_branch_name(&name, ref.get()), "Could not get branch name", godot::TypedArray<godot::String>());
@@ -297,6 +333,11 @@ void GitPlugin::_create_branch(const godot::String &branch_name) {
 }
 
 void GitPlugin::_create_remote(const godot::String &remote_name, const godot::String &remote_url) {
+	if (git_url_contains_credentials(remote_url)) {
+		godot::UtilityFunctions::push_error("GitPlugin: Remote URLs must not contain credentials. Use Redot's version-control credential fields instead.");
+		return;
+	}
+
 	git_remote_ptr remote;
 	GIT2_CALL(git_remote_create(Capture(remote), repo.get(), CString(remote_name).data, CString(remote_url).data), "Could not create remote");
 }
@@ -333,14 +374,21 @@ godot::TypedArray<godot::Dictionary> GitPlugin::_get_line_diff(const godot::Stri
 	GIT2_CALL_R(git_blob_lookup(Capture(blob), repo.get(), &entry->id), "Failed to load head blob", godot::TypedArray<godot::Dictionary>());
 
 	godot::TypedArray<godot::Dictionary> diff_contents;
+	const godot::CharString utf8_text = text.utf8();
 
 	DiffHelper diff_helper = { &diff_contents, this };
-	GIT2_CALL_R(git_diff_blob_to_buffer(blob.get(), nullptr, CString(text).data, text.length(), nullptr, &opts, nullptr, nullptr, diff_hunk_cb, nullptr, &diff_helper), "Failed to make diff", godot::TypedArray<godot::Dictionary>());
+	GIT2_CALL_R(git_diff_blob_to_buffer(blob.get(), nullptr, utf8_text.get_data(), utf8_text.length(), nullptr, &opts, nullptr, nullptr, diff_hunk_cb, nullptr, &diff_helper), "Failed to make diff", godot::TypedArray<godot::Dictionary>());
 
 	return diff_contents;
 }
 
 godot::String GitPlugin::_get_current_branch_name() {
+	const int detached = git_repository_head_detached(repo.get());
+	GIT2_CALL_R(detached < 0 ? detached : 0, "Could not determine whether HEAD is detached", "");
+	if (detached == 1) {
+		return "";
+	}
+
 	git_reference_ptr head;
 	GIT2_CALL_R_IGNORE(git_repository_head(Capture(head), repo.get()), "Could not find repository HEAD", "", { GIT_ENOTFOUND COMMA GIT_EUNBORNBRANCH });
 
@@ -359,18 +407,23 @@ godot::String GitPlugin::_get_current_branch_name() {
 }
 
 godot::TypedArray<godot::String> GitPlugin::_get_remotes() {
-	git_strarray remote_array;
-	GIT2_CALL_R(git_remote_list(&remote_array, repo.get()), "Could not get list of remotes", godot::TypedArray<godot::Dictionary>());
+	git_strarray remote_array = {};
+	GIT2_CALL_R(git_remote_list(&remote_array, repo.get()), "Could not get list of remotes", godot::TypedArray<godot::String>());
 
 	godot::TypedArray<godot::String> remotes;
-	for (int i = 0; i < remote_array.count; i++) {
+	for (size_t i = 0; i < remote_array.count; i++) {
 		remotes.push_back(godot::String::utf8(remote_array.strings[i]));
 	}
+	git_strarray_dispose(&remote_array);
 
 	return remotes;
 }
 
 godot::TypedArray<godot::Dictionary> GitPlugin::_get_previous_commits(int32_t max_commits) {
+	if (max_commits <= 0) {
+		return {};
+	}
+
 	git_revwalk_ptr walker;
 	GIT2_CALL_R(git_revwalk_new(Capture(walker), repo.get()), "Could not create new revwalk", godot::TypedArray<godot::Dictionary>());
 	GIT2_CALL_R(git_revwalk_sorting(walker.get(), GIT_SORT_TIME), "Could not sort revwalk by time", godot::TypedArray<godot::Dictionary>());
@@ -380,7 +433,13 @@ godot::TypedArray<godot::Dictionary> GitPlugin::_get_previous_commits(int32_t ma
 	git_oid oid;
 	godot::TypedArray<godot::Dictionary> commits;
 	char commit_id[GIT_OID_HEXSZ + 1];
-	for (int i = 0; !git_revwalk_next(&oid, walker.get()) && i <= max_commits; i++) {
+	for (int i = 0; i < max_commits; i++) {
+		const int next_error = git_revwalk_next(&oid, walker.get());
+		if (next_error == GIT_ITEROVER) {
+			break;
+		}
+		GIT2_CALL_R(next_error, "Could not read the next commit", commits);
+
 		git_commit_ptr commit;
 		GIT2_CALL_R(git_commit_lookup(Capture(commit), repo.get(), &oid), "Failed to lookup the commit", commits);
 
@@ -468,7 +527,6 @@ void GitPlugin::_pull(const godot::String &remote) {
 
 	if (merge_analysis & GIT_MERGE_ANALYSIS_FASTFORWARD) {
 		git_checkout_options ff_checkout_options = GIT_CHECKOUT_OPTIONS_INIT;
-		int err = 0;
 
 		git_reference_ptr target_ref;
 		GIT2_CALL(git_repository_head(Capture(target_ref), repo.get()), "Failed to get HEAD reference");
@@ -648,15 +706,9 @@ godot::TypedArray<godot::Dictionary> GitPlugin::_parse_diff(git_diff *diff) {
 				const git_diff_line *git_diff_line;
 				GIT2_CALL_R(git_patch_get_line_in_hunk(&git_diff_line, patch.get(), j, k), "Could not get line from hunk in patch", godot::TypedArray<godot::Dictionary>());
 
-				char *content = new char[git_diff_line->content_len + 1];
-				std::memcpy(content, git_diff_line->content, git_diff_line->content_len);
-				content[git_diff_line->content_len] = '\0';
-
 				godot::String status = " "; // We reserve 1 null terminated space to fill the + or the - character at git_diff_line->origin
 				status[0] = git_diff_line->origin;
-				diff_lines.push_back(create_diff_line(git_diff_line->new_lineno, git_diff_line->old_lineno, godot::String::utf8(content), status));
-
-				delete[] content;
+				diff_lines.push_back(create_diff_line(git_diff_line->new_lineno, git_diff_line->old_lineno, godot::String::utf8(git_diff_line->content, git_diff_line->content_len), status));
 			}
 
 			diff_hunk = add_line_diffs_into_diff_hunk(diff_hunk, diff_lines);
@@ -676,46 +728,74 @@ bool GitPlugin::_initialize(const godot::String &project_path) {
 	using namespace godot;
 
 	ERR_FAIL_COND_V(project_path == "", false);
+	ERR_FAIL_COND_V(libgit2_initialized, false);
 
-	int init = git_libgit2_init();
+	auto fail_initialization = [this]() {
+		repo.reset();
+		repo_project_path = godot::String();
+		creds.clear();
+		has_merge = false;
+		pull_merge_oid = {};
+		if (libgit2_initialized) {
+			git_libgit2_shutdown();
+			libgit2_initialized = false;
+		}
+		return false;
+	};
+
+	const int init = git_libgit2_init();
+	if (init < 0) {
+		check_errors(init, __FUNCTION__, __FILE__, __LINE__, "Could not initialize libgit2");
+		return false;
+	}
+	libgit2_initialized = true;
 	if (init > 1) {
 		WARN_PRINT("Multiple libgit2 instances are running");
 	}
 
 	git_buf discovered_repo_path = {};
-	if (git_repository_discover(&discovered_repo_path, CString(project_path).data, 1, nullptr) == 0) {
-		repo_project_path = godot::String::utf8(discovered_repo_path.ptr);
-
-		godot::UtilityFunctions::print("Found a repository at " + repo_project_path + ".");
+	const int discovery_error = git_repository_discover(&discovered_repo_path, CString(project_path).data, 1, nullptr);
+	if (discovery_error != 0) {
 		git_buf_dispose(&discovered_repo_path);
-	} else {
-		repo_project_path = project_path;
-
-		godot::UtilityFunctions::push_warning("Could not find any higher level repositories.");
+		if (discovery_error == GIT_ENOTFOUND) {
+			godot::UtilityFunctions::push_warning("GitPlugin: No existing Git repository was found. Initialize one before enabling version control.");
+		} else {
+			check_errors(discovery_error, __FUNCTION__, __FILE__, __LINE__, "Could not discover a Git repository");
+		}
+		return fail_initialization();
 	}
 
+	repo_project_path = godot::String::utf8(discovered_repo_path.ptr);
+	const int open_error = git_repository_open(Capture(repo), discovered_repo_path.ptr);
+	git_buf_dispose(&discovered_repo_path);
+	if (check_errors(open_error, __FUNCTION__, __FILE__, __LINE__, "Could not open repository")) {
+		return fail_initialization();
+	}
+	if (git_repository_state(repo.get()) == GIT_REPOSITORY_STATE_MERGE) {
+		pull_merge_oid = {};
+		const int merge_head_error = git_repository_mergehead_foreach(repo.get(), mergehead_foreach_cb, &pull_merge_oid);
+		if (check_errors(merge_head_error, __FUNCTION__, __FILE__, __LINE__, "Could not resume the pending merge") || git_oid_is_zero(&pull_merge_oid)) {
+			return fail_initialization();
+		}
+		has_merge = true;
+	}
+
+	godot::UtilityFunctions::print("Found a repository at " + repo_project_path + ".");
 	godot::UtilityFunctions::print("Selected repository path: " + repo_project_path + ".");
-	GIT2_CALL_R(git_repository_init(Capture(repo), CString(repo_project_path).data, 0), "Could not initialize repository", false);
-
-	git_reference_ptr head;
-	GIT2_CALL_R_IGNORE(git_repository_head(Capture(head), repo.get()), "Could not get repository HEAD", false, { GIT_EUNBORNBRANCH COMMA GIT_ENOTFOUND });
-
-	if (!head) {
-		create_gitignore_and_gitattributes();
-	}
 
 	// We need to create a temporary file to load the CA from (libgit2 does not support loading certificates from string or raw pem).
 	const String cafile = ProjectSettings::get_singleton()->globalize_path("res://.godot/git-cas" + OS::get_singleton()->get_entropy(8).hex_encode() + ".crt");
 	godot::Ref<godot::FileAccess> file = godot::FileAccess::open(cafile, godot::FileAccess::WRITE_READ);
 	if (file.is_null()) {
-		return false;
+		godot::UtilityFunctions::push_error("GitPlugin: Could not create the temporary CA certificate file.");
+		return fail_initialization();
 	}
 	file->store_buffer(OS::get_singleton()->get_system_ca_certificates().to_utf8_buffer());
 	file->close();
-	int error = git_libgit2_opts(GIT_OPT_SET_SSL_CERT_LOCATIONS, cafile.utf8().get_data(), NULL);
+	const int error = git_libgit2_opts(GIT_OPT_SET_SSL_CERT_LOCATIONS, cafile.utf8().get_data(), nullptr);
 	DirAccess::remove_absolute(cafile); // Always remove the file
 	if (unlikely(error)) {
-		ERR_PRINT("GitPlugin: Failed to load CA bundle: " + cafile + ", error: " + itos(error));
+		check_errors(error, __FUNCTION__, __FILE__, __LINE__, "Failed to load the system CA bundle");
 	} else {
 		godot::UtilityFunctions::print("GitPlugin: Loaded system CA certificates");
 	}
@@ -725,6 +805,20 @@ bool GitPlugin::_initialize(const godot::String &project_path) {
 
 bool GitPlugin::_shut_down() {
 	repo.reset(); // Destroy repo object before libgit2 shuts down
-	GIT2_CALL_R(git_libgit2_shutdown(), "Could not shutdown Git Plugin", false);
+	creds.clear();
+	has_merge = false;
+	pull_merge_oid = {};
+	repo_project_path = godot::String();
+
+	if (!libgit2_initialized) {
+		return true;
+	}
+
+	const int remaining_initializations = git_libgit2_shutdown();
+	libgit2_initialized = false;
+	if (remaining_initializations < 0) {
+		check_errors(remaining_initializations, __FUNCTION__, __FILE__, __LINE__, "Could not shutdown Git Plugin");
+		return false;
+	}
 	return true;
 }

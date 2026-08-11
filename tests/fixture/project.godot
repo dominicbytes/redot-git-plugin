@@ -1,0 +1,7 @@
+[application]
+
+config/name="Redot Git Plugin Smoke Fixture"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"

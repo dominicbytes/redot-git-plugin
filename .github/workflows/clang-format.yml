@@ -2,13 +2,16 @@ name: clang-format
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
 jobs:
   clang-format:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: DoozyX/clang-format-lint-action@v0.18.2
+      - uses: actions/checkout@v6
+      - uses: DoozyX/clang-format-lint-action@v0.20
         with:
           source: "godot-git-plugin/src"
           extensions: "h,cpp"

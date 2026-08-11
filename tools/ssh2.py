@@ -14,7 +14,7 @@ def build_library(env, deps):
         "BUILD_SHARED_LIBS": 0,
         "CMAKE_DISABLE_FIND_PACKAGE_ZLIB": 1,
         "CRYPTO_BACKEND": "OpenSSL",
-        "CMAKE_POLICY_VERSION_MINIMUM": 3.5,
+        "CMAKE_POLICY_VERSION_MINIMUM": "3.10",
     }
 
     if env["platform"] != "windows":
@@ -36,6 +36,7 @@ def build_library(env, deps):
         cmake_outputs=libs,
         cmake_targets=[],
         dependencies=deps,
+        languages=["C"],
     )
 
     env.Append(CPPPATH=["#thirdparty/ssh2/libssh2/include"])

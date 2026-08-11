@@ -1,0 +1,405 @@
+extends SceneTree
+
+const RESULT_PREFIX := "REDOT_GIT_PROVIDER_TEST="
+const TREE_AREA_STAGED := 1
+const TREE_AREA_UNSTAGED := 2
+
+
+func _initialize() -> void:
+	call_deferred("_run")
+
+
+func _run() -> void:
+	for _frame: int in range(300):
+		if ClassDB.class_exists(&"GitPlugin"):
+			break
+		await process_frame
+
+	var arguments := OS.get_cmdline_user_args()
+	var scenario := arguments[0] if not arguments.is_empty() else "local"
+	var result: Dictionary
+	match scenario:
+		"nonrepo":
+			result = _run_non_repository()
+		"unborn":
+			result = _run_unborn()
+		"remote":
+			result = _run_remote()
+		"reject":
+			result = _run_push(false)
+		"force":
+			result = _run_push(true)
+		"merge":
+			result = _run_merge()
+		"conflict":
+			result = _run_conflict()
+		"resolve":
+			result = _run_resolution()
+		"security":
+			result = _run_security()
+		"edge":
+			result = _run_edge_matrix()
+		"detached":
+			result = _run_detached()
+		_:
+			result = _run_local()
+	print(RESULT_PREFIX + JSON.stringify(result))
+	if not result.get("passed", false):
+		quit(1)
+
+
+func _new_provider() -> Object:
+	if not ClassDB.class_exists(&"GitPlugin") or not ClassDB.can_instantiate(&"GitPlugin"):
+		return null
+	return ClassDB.instantiate(&"GitPlugin")
+
+
+func _run_non_repository() -> Dictionary:
+	var provider := _new_provider()
+	if provider == null:
+		return {"scenario": "nonrepo", "passed": false, "reason": "GitPlugin was not instantiable"}
+	var initialized: bool = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	return {
+		"scenario": "nonrepo",
+		"initialized": initialized,
+		"passed": not initialized,
+	}
+
+
+func _run_local() -> Dictionary:
+	var provider := _new_provider()
+	if provider == null:
+		return {"scenario": "local", "passed": false, "reason": "GitPlugin was not instantiable"}
+
+	var result: Dictionary = {"scenario": "local"}
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	if not result.initialize:
+		result["passed"] = false
+		return result
+
+	result["vcs_name"] = provider.call("test_get_vcs_name")
+	result["branch_before"] = provider.call("test_get_current_branch_name")
+	result["status_before"] = provider.call("test_get_modified_files_data")
+	result["unstaged_diff"] = provider.call("test_get_diff", "tracked.txt", TREE_AREA_UNSTAGED)
+	result["unicode_line_diff"] = provider.call("test_get_line_diff", "unicode.txt", "café\nééééé\none\ntwo\n")
+
+	provider.call("test_discard_file", "discard.txt")
+	result["discarded_text"] = FileAccess.get_file_as_string("res://discard.txt")
+
+	provider.call("test_stage_file", "unstage.txt")
+	result["status_staged"] = provider.call("test_get_modified_files_data")
+	provider.call("test_unstage_file", "unstage.txt")
+	result["status_unstaged"] = provider.call("test_get_modified_files_data")
+
+	provider.call("test_stage_file", "untracked.txt")
+	provider.call("test_commit", "Provider fixture commit")
+	result["history_one"] = provider.call("test_get_previous_commits", 1)
+	result["history_zero"] = provider.call("test_get_previous_commits", 0)
+
+	provider.call("test_create_branch", "provider-feature")
+	result["branches_created"] = provider.call("test_get_branch_list")
+	result["checkout_feature"] = provider.call("test_checkout_branch", "provider-feature")
+	result["branch_feature"] = provider.call("test_get_current_branch_name")
+	result["checkout_main"] = provider.call("test_checkout_branch", "main")
+	provider.call("test_remove_branch", "provider-feature")
+	result["branches_removed"] = provider.call("test_get_branch_list")
+
+	provider.call("test_create_remote", "fixture", ProjectSettings.globalize_path("res://../remote.git"))
+	result["remotes_created"] = provider.call("test_get_remotes")
+	provider.call("test_remove_remote", "fixture")
+	result["remotes_removed"] = provider.call("test_get_remotes")
+
+	provider.call("test_set_credentials", "fixture-user", "fixture-secret", "", "", "")
+	result["shutdown"] = provider.call("test_shutdown")
+	result["passed"] = _local_passed(result)
+	return result
+
+
+func _run_unborn() -> Dictionary:
+	var provider := _new_provider()
+	if provider == null:
+		return {"scenario": "unborn", "passed": false, "reason": "GitPlugin was not instantiable"}
+	var result: Dictionary = {"scenario": "unborn"}
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	result["branch_before"] = provider.call("test_get_current_branch_name")
+	_write_file("res://initial.txt", "initial content\n")
+	provider.call("test_stage_file", "initial.txt")
+	result["status_staged"] = provider.call("test_get_modified_files_data")
+	provider.call("test_unstage_file", "initial.txt")
+	result["status_unstaged"] = provider.call("test_get_modified_files_data")
+	provider.call("test_stage_file", "initial.txt")
+	provider.call("test_commit", "Initial provider commit")
+	result["branch_after"] = provider.call("test_get_current_branch_name")
+	result["history"] = provider.call("test_get_previous_commits", 2)
+	result["shutdown"] = provider.call("test_shutdown")
+	result["passed"] = (
+		result.initialize
+		and result.branch_before == ""
+		and _has_status(result.status_staged, "initial.txt", TREE_AREA_STAGED)
+		and _has_status(result.status_unstaged, "initial.txt", TREE_AREA_UNSTAGED)
+		and result.branch_after == "main"
+		and result.history.size() == 1
+		and result.shutdown
+	)
+	return result
+
+
+func _run_remote() -> Dictionary:
+	var provider := _new_provider()
+	if provider == null:
+		return {"scenario": "remote", "passed": false, "reason": "GitPlugin was not instantiable"}
+	var result: Dictionary = {"scenario": "remote"}
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	provider.call("test_fetch", "origin")
+	provider.call("test_pull", "origin")
+	result["pulled_text"] = FileAccess.get_file_as_string("res://upstream.txt")
+	provider.call("test_pull", "origin")
+	_write_file("res://provider-push.txt", "pushed by provider\n")
+	provider.call("test_stage_file", "provider-push.txt")
+	provider.call("test_commit", "Provider remote commit")
+	result["local_tip"] = provider.call("test_get_previous_commits", 1)
+	provider.call("test_push", "origin", false)
+	result["shutdown"] = provider.call("test_shutdown")
+	result["passed"] = (
+		result.initialize
+		and result.pulled_text.replace("\r\n", "\n") == "from upstream\n"
+		and result.local_tip.size() == 1
+		and result.shutdown
+	)
+	return result
+
+
+func _run_push(force: bool) -> Dictionary:
+	var provider := _new_provider()
+	if provider == null:
+		return {"scenario": "force" if force else "reject", "passed": false, "reason": "GitPlugin was not instantiable"}
+	var result: Dictionary = {"scenario": "force" if force else "reject", "force": force}
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	result["local_tip"] = provider.call("test_get_previous_commits", 1)
+	provider.call("test_push", "origin", force)
+	result["shutdown"] = provider.call("test_shutdown")
+	result["passed"] = result.initialize and result.local_tip.size() == 1 and result.shutdown
+	return result
+
+
+func _run_merge() -> Dictionary:
+	var provider := _new_provider()
+	if provider == null:
+		return {"scenario": "merge", "passed": false, "reason": "GitPlugin was not instantiable"}
+	var result: Dictionary = {"scenario": "merge"}
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	provider.call("test_pull", "origin")
+	result["status_after_pull"] = provider.call("test_get_modified_files_data")
+	provider.call("test_commit", "Provider merge commit")
+	result["history"] = provider.call("test_get_previous_commits", 1)
+	result["shutdown"] = provider.call("test_shutdown")
+	result["passed"] = result.initialize and result.history.size() == 1 and result.shutdown
+	return result
+
+
+func _run_conflict() -> Dictionary:
+	var provider := _new_provider()
+	if provider == null:
+		return {"scenario": "conflict", "passed": false, "reason": "GitPlugin was not instantiable"}
+	var result: Dictionary = {"scenario": "conflict"}
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	provider.call("test_pull", "origin")
+	result["status"] = provider.call("test_get_modified_files_data")
+	result["has_conflict"] = _has_change_type(result.status, 5)
+	result["shutdown"] = provider.call("test_shutdown")
+	result["passed"] = result.initialize and result.has_conflict and result.shutdown
+	return result
+
+
+func _run_resolution() -> Dictionary:
+	var provider := _new_provider()
+	if provider == null:
+		return {"scenario": "resolve", "passed": false, "reason": "GitPlugin was not instantiable"}
+	var result: Dictionary = {"scenario": "resolve"}
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	_write_file("res://conflict.txt", "resolved by provider\n")
+	provider.call("test_stage_file", "conflict.txt")
+	provider.call("test_commit", "Resolve provider conflict")
+	result["history"] = provider.call("test_get_previous_commits", 1)
+	result["shutdown"] = provider.call("test_shutdown")
+	result["passed"] = result.initialize and result.history.size() == 1 and result.shutdown
+	return result
+
+
+func _run_security() -> Dictionary:
+	var provider := _new_provider()
+	if provider == null:
+		return {"scenario": "security", "passed": false, "reason": "GitPlugin was not instantiable"}
+	var password := "SENTINEL_" + "PASSWORD_42"
+	var passphrase := "SENTINEL_" + "PASSPHRASE_42"
+	var public_key := "C:/sentinel/" + "PUBLIC_KEY_42.pub"
+	var private_key := "C:/sentinel/" + "PRIVATE_KEY_42"
+	var username := "sentinel-" + "user-42"
+	var url_secret := "SENTINEL_" + "URL_SECRET_42"
+	var query_secret := "SENTINEL_" + "QUERY_SECRET_42"
+	var result: Dictionary = {"scenario": "security"}
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	provider.call("test_set_credentials", username, password, public_key, private_key, passphrase)
+	var sensitive_text := "https://" + username + ":" + password + "@example.invalid/repo?token=" + query_secret + " " + public_key + " " + private_key + " " + passphrase
+	result["sanitized"] = provider.call("test_sanitize_output", sensitive_text)
+	var credential_url := "https://" + username + ":" + url_secret + "@example.invalid/repo?token=" + query_secret
+	provider.call("test_create_remote", "credential-url", credential_url)
+	provider.call("test_create_remote", "scp-credential-url", username + "@example.invalid:repository.git")
+	result["remotes"] = provider.call("test_get_remotes")
+	provider.call("test_create_remote", "invalid", "https://127.0.0.1:1/repository.git")
+	provider.call("test_fetch", "invalid")
+	provider.call("test_remove_remote", "invalid")
+	result["shutdown"] = provider.call("test_shutdown")
+	result["credentials_empty"] = provider.call("test_credentials_empty")
+	result["passed"] = (
+		result.initialize
+		and not result.remotes.has("credential-url")
+		and not result.remotes.has("scp-credential-url")
+		and result.sanitized.contains("[redacted]")
+		and not result.sanitized.contains("SENTINEL_")
+		and result.shutdown
+		and result.credentials_empty
+	)
+	return result
+
+
+func _run_edge_matrix() -> Dictionary:
+	var provider := _new_provider()
+	if provider == null:
+		return {"scenario": "edge", "passed": false, "reason": "GitPlugin was not instantiable"}
+	var result: Dictionary = {"scenario": "edge"}
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	var status: Array = provider.call("test_get_modified_files_data")
+	result["status"] = status
+	var history_before: Array = provider.call("test_get_previous_commits", 10)
+	result["history_before"] = history_before
+	var root_id: String = history_before[history_before.size() - 1].get("id", "")
+	var latest_id: String = history_before[0].get("id", "")
+	result["root_diff_count"] = provider.call("test_get_diff", root_id, 0).size()
+	result["latest_diff_count"] = provider.call("test_get_diff", latest_id, 0).size()
+	result["modified_diff_count"] = provider.call("test_get_diff", "modified.txt", TREE_AREA_UNSTAGED).size()
+	result["staged_diff_count"] = provider.call("test_get_diff", "staged-new.txt", TREE_AREA_STAGED).size()
+	result["large_diff_count"] = provider.call("test_get_diff", "large.txt", TREE_AREA_UNSTAGED).size()
+	result["binary_diff_count"] = provider.call("test_get_diff", "binary.bin", TREE_AREA_UNSTAGED).size()
+
+	provider.call("test_stage_file", "unicodé file.txt")
+	provider.call("test_commit", "Provider café\nsecond line")
+	result["history_after"] = provider.call("test_get_previous_commits", 1)
+
+	provider.call("test_create_branch", "feature-é")
+	result["branches_unicode"] = provider.call("test_get_branch_list")
+	result["checkout_unicode"] = provider.call("test_checkout_branch", "feature-é")
+	result["branch_unicode"] = provider.call("test_get_current_branch_name")
+	result["checkout_main"] = provider.call("test_checkout_branch", "main")
+	provider.call("test_remove_branch", "feature-é")
+	provider.call("test_create_branch", "invalid branch")
+	provider.call("test_remove_branch", "main")
+	result["branches_final"] = provider.call("test_get_branch_list")
+	result["shutdown"] = provider.call("test_shutdown")
+	result["passed"] = (
+		result.initialize
+		and _has_status(status, "modified.txt", TREE_AREA_UNSTAGED)
+		and _has_change(status, "deleted.txt", 3, TREE_AREA_UNSTAGED)
+		and _has_change(status, "renamed.txt", 2, TREE_AREA_UNSTAGED)
+		and _has_change(status, "staged-rename-old.txt", 3, TREE_AREA_STAGED)
+		and _has_change(status, "staged-renamed.txt", 0, TREE_AREA_STAGED)
+		and _has_status(status, "staged-new.txt", TREE_AREA_STAGED)
+		and _has_status(status, "unicodé file.txt", TREE_AREA_UNSTAGED)
+		and result.root_diff_count > 0
+		and result.latest_diff_count > 0
+		and result.modified_diff_count > 0
+		and result.staged_diff_count > 0
+		and result.large_diff_count > 0
+		and result.binary_diff_count > 0
+		and result.history_after.size() == 1
+		and result.history_after[0].get("message", "") == "Provider café\nsecond line"
+		and result.branches_unicode.has("feature-é")
+		and result.checkout_unicode
+		and result.branch_unicode == "feature-é"
+		and result.checkout_main
+		and not result.branches_final.has("feature-é")
+		and not result.branches_final.has("invalid branch")
+		and result.branches_final.has("main")
+		and result.shutdown
+	)
+	return result
+
+
+func _run_detached() -> Dictionary:
+	var provider := _new_provider()
+	if provider == null:
+		return {"scenario": "detached", "passed": false, "reason": "GitPlugin was not instantiable"}
+	var result: Dictionary = {"scenario": "detached"}
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	result["branch"] = provider.call("test_get_current_branch_name")
+	result["branches"] = provider.call("test_get_branch_list")
+	result["checkout_main"] = provider.call("test_checkout_branch", "main")
+	result["branch_after"] = provider.call("test_get_current_branch_name")
+	result["shutdown"] = provider.call("test_shutdown")
+	result["passed"] = (
+		result.initialize
+		and result.branch == ""
+		and result.branches.has("main")
+		and result.checkout_main
+		and result.branch_after == "main"
+		and result.shutdown
+	)
+	return result
+
+
+func _write_file(path: String, contents: String) -> void:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(contents)
+	file.close()
+
+
+func _has_status(items: Array, file_path: String, area: int) -> bool:
+	for item: Dictionary in items:
+		if item.get("file_path") == file_path and item.get("area") == area:
+			return true
+	return false
+
+
+func _has_change_type(items: Array, change_type: int) -> bool:
+	for item: Dictionary in items:
+		if item.get("change_type") == change_type:
+			return true
+	return false
+
+
+func _has_change(items: Array, file_path: String, change_type: int, area: int) -> bool:
+	for item: Dictionary in items:
+		if item.get("file_path") == file_path and item.get("change_type") == change_type and item.get("area") == area:
+			return true
+	return false
+
+
+func _has_hunk_with_new_lines(items: Array, line_count: int) -> bool:
+	for item: Dictionary in items:
+		if item.get("new_lines") == line_count:
+			return true
+	return false
+
+
+func _local_passed(result: Dictionary) -> bool:
+	return (
+		result.get("initialize") == true
+		and result.get("shutdown") == true
+		and result.get("vcs_name") == "Git"
+		and result.get("branch_before") == "main"
+		and _has_status(result.get("status_before", []), "untracked.txt", TREE_AREA_UNSTAGED)
+		and not result.get("unstaged_diff", []).is_empty()
+		and _has_hunk_with_new_lines(result.get("unicode_line_diff", []), 3)
+		and result.get("discarded_text", "").replace("\r\n", "\n") == "keep\n"
+		and _has_status(result.get("status_staged", []), "unstage.txt", TREE_AREA_STAGED)
+		and _has_status(result.get("status_unstaged", []), "unstage.txt", TREE_AREA_UNSTAGED)
+		and result.get("history_one", []).size() == 1
+		and result.get("history_zero", []).is_empty()
+		and result.get("branches_created", []).has("provider-feature")
+		and result.get("checkout_feature") == true
+		and result.get("branch_feature") == "provider-feature"
+		and result.get("checkout_main") == true
+		and not result.get("branches_removed", []).has("provider-feature")
+		and result.get("remotes_created", []).has("fixture")
+		and not result.get("remotes_removed", []).has("fixture")
+	)
