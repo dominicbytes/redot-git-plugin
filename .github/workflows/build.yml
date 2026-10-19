@@ -28,6 +28,9 @@ jobs:
         run: |
           python scripts/compare_vcs_api.py --output reports/api-diffs/git-editor-vcs-interface.md
           git diff --exit-code -- reports/api-diffs/
+      # The redirect patch tests apply the patch to the pinned libgit2 source.
+      - name: Fetch pinned libgit2 source
+        run: git submodule update --init --depth 1 thirdparty/git2/libgit2
       - name: Run Python unit tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
       - name: Validate Python tooling
