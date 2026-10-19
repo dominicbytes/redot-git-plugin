@@ -73,7 +73,8 @@ UrlParts split_url(const std::string &value) {
 		}
 		parts.uri = true;
 		parts.scheme = lowercase(value.substr(0, colon));
-		const size_t end = value.find_first_of("/?#", colon + 3);
+		// libgit2 ends authority only at a slash; ? and # may be userinfo.
+		const size_t end = value.find('/', colon + 3);
 		parts.authority = value.substr(colon + 3, end == std::string::npos ? end : end - colon - 3);
 		const size_t query = value.find('?', end);
 		const size_t fragment = value.find('#', end);
@@ -259,7 +260,7 @@ godot::String sanitize_git_output(const godot::String &text, const Credentials *
 			const std::string token = original.substr(start, end - start);
 			const size_t scheme = token.find("://");
 			const size_t authority = scheme == std::string::npos ? 0 : scheme + 3;
-			const size_t authority_end = token.find_first_of("/?#", authority);
+			const size_t authority_end = token.find('/', authority);
 			const size_t at = token.rfind('@', authority_end == std::string::npos ? token.size() : authority_end);
 			if (at != std::string::npos && at >= authority && (scheme != std::string::npos || token.find(':', at) != std::string::npos)) {
 				ends[start + authority] = std::max(ends[start + authority], start + at);

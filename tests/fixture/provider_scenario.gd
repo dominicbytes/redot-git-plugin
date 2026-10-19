@@ -39,7 +39,7 @@ func _run() -> void:
 			result = _run_resolution()
 		"security":
 			result = _run_security()
-		"security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback", "security_redirect_cross", "security_redirect_same":
+		"security_authority", "security_ambiguous_query", "security_ambiguous_fragment", "security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback", "security_redirect_cross", "security_redirect_same":
 			result = _run_security_regression(scenario)
 		"edge":
 			result = _run_edge_matrix()
@@ -676,6 +676,35 @@ func _run_security_regression(scenario: String) -> Dictionary:
 			provider.call("test_set_credentials", "fixture", "redirect-password", "", "", "")
 			provider.call("test_create_remote", "redirect-loopback", config.url)
 			provider.call("test_fetch", "redirect-loopback")
+		"security_ambiguous_query", "security_ambiguous_fragment":
+			var config: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://redirect-config.json"))
+			provider.call("test_create_remote", "ambiguous-create", config.url)
+			passed = not provider.call("test_get_remotes").has("ambiguous-create") and passed
+			passed = not provider.call("test_remote_url_allowed", "ambiguous-effective", false) and passed
+			passed = not provider.call("test_remote_url_allowed", "ambiguous-effective", true) and passed
+			provider.call("test_fetch", "ambiguous-effective")
+			provider.call("test_push", "ambiguous-effective", false)
+		"security_authority":
+			var checks: Array = []
+			for delimiter: String in ["?", "#"]:
+				for scheme: String in ["http", "https", "ssh"]:
+					var userinfo := "user:URL_SECRET" + delimiter + "x"
+					var url := scheme + "://" + userinfo + "@example.invalid/repo"
+					var name := "ambiguous-" + str(checks.size())
+					provider.call("test_create_remote", name, url)
+					checks.append(not provider.call("test_get_remotes").has(name))
+					checks.append(provider.call("test_sanitize_output", url) == scheme + "://[redacted]@example.invalid/repo")
+					checks.append(provider.call("test_credential_requests", scheme + "://example.invalid/repo", [url], 1, "") == [false])
+				var http_user := "https://user" + delimiter + "x@example.invalid/repo"
+				provider.call("test_create_remote", "http-user-" + str(checks.size()), http_user)
+				checks.append(provider.call("test_sanitize_output", http_user) == "https://[redacted]@example.invalid/repo")
+				checks.append(not provider.call("test_get_remotes").has("http-user-" + str(checks.size() - 1)))
+				var ssh_empty := "ssh://user" + delimiter + "x:@example.invalid/repo"
+				provider.call("test_create_remote", "ssh-empty-" + str(checks.size()), ssh_empty)
+				checks.append(not provider.call("test_get_remotes").has("ssh-empty-" + str(checks.size())))
+				checks.append(provider.call("test_sanitize_output", ssh_empty) == "ssh://[redacted]@example.invalid/repo")
+			result["checks"] = checks
+			passed = not checks.has(false) and passed
 		"security_urls":
 			var allowed: Array[String] = [
 				"ssh://git%40team@example.invalid/repo", "ssh://git@team@example.invalid/repo",

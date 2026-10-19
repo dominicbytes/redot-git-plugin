@@ -150,6 +150,13 @@ def prepare_security_remotes(project: Path, temp_root: Path, git: str) -> None:
     (remote / "refs" / "heads" / "main.lock").write_text("locked by fixture\n", encoding="utf-8")
 
 
+def prepare_ambiguous_remote(project: Path, git: str, url: str) -> None:
+    initialize_repository(project, git)
+    (project / "redirect-config.json").write_text(json.dumps({"url": url}), encoding="utf-8")
+    checked([git, "config", "remote.ambiguous-effective.url", url], project)
+    checked([git, "config", "remote.ambiguous-effective.pushurl", url], project)
+
+
 def verify_security_output(report: dict[str, object]) -> None:
     output = str(report["output"])
     policy_failures = output.count("Remote URLs must not contain credentials")
@@ -472,7 +479,20 @@ def main() -> int:
                 }
                 policy_passed = not destinations if cross_port else any(event["authorization_valid"] for event in destinations) and all(not event["authorization_present"] or event["authorization_valid"] for event in destinations)
                 report["passed"] = report["passed"] and authenticated_source and policy_passed
-        for scenario in ("security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback"):
+        for delimiter, suffix in (("?", "query"), ("#", "fragment")):
+            with redirect_fixture(False) as (url, events):
+                ambiguous = url.replace("http://", "http://user:URL_SECRET" + delimiter + "x@", 1)
+                _case_root, _case_project, report = execute(
+                    "security_ambiguous_" + suffix,
+                    lambda project, _temp_root: prepare_ambiguous_remote(project, arguments.git, ambiguous),
+                )
+                report["authority_verification"] = {
+                    "requests": len(events),
+                    "authorization_present": any(event["authorization_present"] for event in events),
+                    "sentinel_free": "URL_SECRET" not in str(report["output"]),
+                }
+                report["passed"] = report["passed"] and not events and report["authority_verification"]["sentinel_free"]
+        for scenario in ("security_authority", "security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback"):
             _case_root, _case_project, report = execute(
                 scenario, lambda project, _temp_root: initialize_repository(project, arguments.git)
             )
