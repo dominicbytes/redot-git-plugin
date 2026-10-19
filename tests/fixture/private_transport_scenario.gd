@@ -26,7 +26,7 @@ func _run() -> void:
 	}
 	if not result.initialize:
 		result["passed"] = false
-		_finish(result)
+		_finish(result, provider)
 		return
 
 	if transport == "https":
@@ -67,10 +67,18 @@ func _run() -> void:
 		and result.shutdown
 		and result.credentials_empty
 	)
-	_finish(result)
+	_finish(result, provider)
 
 
-func _finish(result: Dictionary) -> void:
+func _finish(result: Dictionary, provider: Object = null) -> void:
+	var freed := true
+	if is_instance_valid(provider):
+		provider.call("test_shutdown")
+		var instance_id := provider.get_instance_id()
+		provider.free()
+		freed = not is_instance_id_valid(instance_id)
+	result["providers_freed"] = freed
+	result["passed"] = result.get("passed", false) and freed
 	print(RESULT_PREFIX + JSON.stringify(result))
 	if not result.get("passed", false):
 		quit(1)

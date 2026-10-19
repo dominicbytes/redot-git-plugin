@@ -4,6 +4,8 @@ const RESULT_PREFIX := "REDOT_GIT_PROVIDER_TEST="
 const TREE_AREA_STAGED := 1
 const TREE_AREA_UNSTAGED := 2
 
+var _providers: Array[Object] = []
+
 
 func _initialize() -> void:
 	call_deferred("_run")
@@ -43,6 +45,15 @@ func _run() -> void:
 			result = _run_detached()
 		_:
 			result = _run_local()
+	var freed := true
+	for provider: Object in _providers:
+		provider.call("test_shutdown")
+		var instance_id := provider.get_instance_id()
+		provider.free()
+		freed = freed and not is_instance_id_valid(instance_id)
+	result["providers_freed"] = freed
+	result["passed"] = result.get("passed", false) and result.providers_freed
+	_providers.clear()
 	print(RESULT_PREFIX + JSON.stringify(result))
 	if not result.get("passed", false):
 		quit(1)
@@ -51,7 +62,9 @@ func _run() -> void:
 func _new_provider() -> Object:
 	if not ClassDB.class_exists(&"GitPlugin") or not ClassDB.can_instantiate(&"GitPlugin"):
 		return null
-	return ClassDB.instantiate(&"GitPlugin")
+	var provider: Object = ClassDB.instantiate(&"GitPlugin")
+	_providers.append(provider)
+	return provider
 
 
 func _run_non_repository() -> Dictionary:
