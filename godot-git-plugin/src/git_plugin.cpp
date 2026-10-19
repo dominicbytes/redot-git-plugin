@@ -811,6 +811,7 @@ bool GitPlugin::_shut_down() {
 	repo_project_path = godot::String();
 
 	if (!libgit2_initialized) {
+		godot::UtilityFunctions::print("GitPlugin: Shut down");
 		return true;
 	}
 

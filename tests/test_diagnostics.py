@@ -16,6 +16,37 @@ class DiagnosticsTests(unittest.TestCase):
         return classify(output, code, identity=kwargs.pop("identity", OFFICIAL_26_3),
                         result_passed=kwargs.pop("result_passed", True), **kwargs)
 
+    def test_nonrepo_completed_shutdown_is_classified(self):
+        warning = "WARNING: GitPlugin: No existing Git repository was found. Initialize one before enabling version control."
+        leak = "WARNING: ObjectDB instances leaked at exit (run with --verbose for details)."
+        text = warning + "\nGitPlugin: Shut down\n" + leak
+        result = self.classify(text, scenario="nonrepo", providers_freed=True)
+        self.assertEqual(result["outcome"], "known_engine_shutdown_leak")
+        for output, options in (
+            (warning + "\n" + leak, {}),
+            (text, {"result_passed": False}),
+            (text, {"providers_freed": False}),
+            (text, {"scenario": "local"}),
+        ):
+            with self.subTest(output=output, options=options):
+                self.assertFalse(self.classify(output, **({"scenario": "nonrepo", "providers_freed": True} | options))["passed"])
+
+    def test_nonrepo_runner_requires_completed_shutdown(self):
+        from run_provider_tests import run_scenario
+
+        warning = "WARNING: GitPlugin: No existing Git repository was found. Initialize one before enabling version control."
+        marker = 'REDOT_GIT_PROVIDER_TEST={"scenario":"nonrepo","initialized":false,"passed":true,"providers_freed":true}'
+        for shutdown, accepted in (("GitPlugin: Shut down\n", True), ("", False)):
+            with self.subTest(shutdown=shutdown):
+                process = subprocess.CompletedProcess(
+                    ["engine", "--editor", "--", "nonrepo"], 0, warning + "\n" + shutdown + marker, "")
+                with patch("run_provider_tests.install_scenario_driver"), patch(
+                    "run_provider_tests.run", return_value=process
+                ):
+                    report = run_scenario(Path("engine"), Path("fixture"), "nonrepo",
+                                          "26.2.stable.official.4f5b14aba")
+                self.assertEqual(report["passed"], accepted)
+
     def test_plugin_crash_before_marker_fails(self):
         result = self.classify("CrashHandler: Program crashed\nGitPlugin: Shut down", 139)
         self.assertEqual(result["outcome"], "failed")
