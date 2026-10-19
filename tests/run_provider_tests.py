@@ -130,6 +130,38 @@ def prepare_security(project: Path, git: str) -> None:
     checked([git, "commit", "-m", "Security baseline"], project)
 
 
+def prepare_security_remotes(project: Path, temp_root: Path, git: str) -> None:
+    prepare_security(project, git)
+    safe = "https://example.invalid/repo.git"
+    secret = "POLICY_SECRET_42"
+    for name in ("unsafe-fetch", "unsafe-push", "rewritten-fetch", "rewritten-push"):
+        checked([git, "remote", "add", name, safe], project)
+    checked([git, "config", "remote.unsafe-fetch.url", safe + "?%74oken=" + secret], project)
+    checked([git, "config", "remote.unsafe-push.pushurl", "https://user:" + secret + "@example.invalid/repo.git"], project)
+    checked([git, "config", "remote.rewritten-fetch.url", "fixture-fetch:repo.git"], project)
+    checked([git, "config", "url.https://user:" + secret + "@example.invalid/.insteadOf", "fixture-fetch:"], project)
+    checked([git, "config", "url.https://user:" + secret + "@example.invalid/.pushInsteadOf", safe], project)
+    # libgit2's local transport does not execute receive hooks. A locked ref
+    # exercises its real per-reference rejection path without a network server.
+    remote = temp_root / "locked.git"
+    checked([git, "init", "--bare", "--initial-branch=main", str(remote)], temp_root)
+    checked([git, "remote", "add", "locked-remote", remote.as_posix()], project)
+    (remote / "refs" / "heads" / "main.lock").write_text("locked by fixture\n", encoding="utf-8")
+
+
+def verify_security_output(report: dict[str, object]) -> None:
+    output = str(report["output"])
+    policy_failures = output.count("Remote URLs must not contain credentials")
+    rejected = "Push rejected:" in output and "remote rejected a reference update" in output
+    report["network_verification"] = {
+        "policy_failures": policy_failures,
+        "push_rejection_reported": rejected,
+        "success_marker_absent": all(marker not in output for marker in ("Push ended", "Fetch ended", "Pull ended")),
+    }
+    if policy_failures < 30 or not rejected or not report["network_verification"]["success_marker_absent"]:
+        report["passed"] = False
+
+
 def prepare_edge_matrix(project: Path, git: str) -> None:
     initialize_repository(project, git)
     checked([git, "config", "user.name", "Jos\u00e9 Fixture"], project)
@@ -502,7 +534,7 @@ def main() -> int:
         reports.append(resolution_report)
 
         _root, security_project, security_report = execute(
-            "security", lambda project, _temp_root: prepare_security(project, arguments.git)
+            "security", lambda project, temp_root: prepare_security_remotes(project, temp_root, arguments.git)
         )
         sentinels = (
             "sentinel-user-42",
@@ -510,15 +542,17 @@ def main() -> int:
             "SENTINEL_PASSPHRASE_42",
             "SENTINEL_URL_SECRET_42",
             "SENTINEL_QUERY_SECRET_42",
-            "C:" + chr(47) + "sentinel/PUBLIC_KEY_42.pub",
-            "C:" + chr(47) + "sentinel/PRIVATE_KEY_42",
+            "sentinel/PUBLIC_KEY_42.pub",
+            "sentinel/PRIVATE_KEY_42",
         )
         leaked = []
         for path in security_project.rglob("*"):
             if path.is_file():
                 data = path.read_bytes()
                 leaked.extend(f"{path.relative_to(security_project).as_posix()}:sentinel" for sentinel in sentinels if sentinel.encode() in data)
+        verify_security_output(security_report)
         combined_output = security_report["output"]
+        leaked.extend("output:sentinel" for sentinel in ("POLICY_SECRET_42", "UNCONFIGURED_SPLIT_SECRET_42", "UNCONFIGURED_QUERY_SECRET_42") if sentinel in combined_output)
         leaked.extend("output:sentinel" for sentinel in sentinels if sentinel in combined_output)
         security_report["verification"] = {"sentinel_matches": leaked}
         if leaked:

@@ -113,6 +113,10 @@ void GitPlugin::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("test_sanitize_output", "text"), &GitPlugin::test_sanitize_output);
 	ClassDB::bind_method(D_METHOD("test_credentials_empty"), &GitPlugin::test_credentials_empty);
 	ClassDB::bind_method(D_METHOD("test_set_ca_certificate", "path"), &GitPlugin::test_set_ca_certificate);
+	ClassDB::bind_method(D_METHOD("test_remote_url_allowed", "remote", "push"), &GitPlugin::test_remote_url_allowed);
+	ClassDB::bind_method(D_METHOD("test_credential_requests", "origin", "urls", "types", "username"), &GitPlugin::test_credential_requests);
+	ClassDB::bind_method(D_METHOD("test_progress_packets", "packets"), &GitPlugin::test_progress_packets);
+	ClassDB::bind_method(D_METHOD("test_push_rejection", "status"), &GitPlugin::test_push_rejection);
 #endif
 }
 
@@ -123,6 +127,39 @@ godot::String GitPlugin::test_sanitize_output(const godot::String &text) {
 
 bool GitPlugin::test_credentials_empty() const {
 	return creds.username.is_empty() && creds.password.is_empty() && creds.ssh_public_key_path.is_empty() && creds.ssh_private_key_path.is_empty() && creds.ssh_passphrase.is_empty();
+}
+
+bool GitPlugin::test_remote_url_allowed(const godot::String &remote, bool push) {
+	git_remote_ptr remote_object;
+	if (git_remote_lookup(Capture(remote_object), repo.get(), CString(remote).data) != 0) {
+		return false;
+	}
+	return validate_remote_url(remote_object.get(), push ? GIT_DIRECTION_PUSH : GIT_DIRECTION_FETCH);
+}
+
+godot::Array GitPlugin::test_credential_requests(const godot::String &origin, const godot::Array &urls, int types, const godot::String &username) {
+	RemoteOperation operation(&creds, CString(origin).data);
+	godot::Array results;
+	for (int i = 0; i < urls.size(); ++i) {
+		git_credential *credential = nullptr;
+		const int error = credentials_cb(&credential, CString(urls[i]).data, username.is_empty() ? nullptr : CString(username).data, types, &operation);
+		results.push_back(error == 0 && credential != nullptr);
+		git_credential_free(credential);
+	}
+	return results;
+}
+
+void GitPlugin::test_progress_packets(const godot::Array &packets) {
+	RemoteOperation operation(&creds, nullptr);
+	for (int i = 0; i < packets.size(); ++i) {
+		const godot::CharString bytes = godot::String(packets[i]).utf8();
+		progress_cb(bytes.get_data(), bytes.length(), &operation);
+	}
+}
+
+bool GitPlugin::test_push_rejection(const godot::String &status) {
+	RemoteOperation operation(&creds, nullptr);
+	return push_update_reference_cb("refs/heads/main", CString(status).data, &operation) < 0 && operation.push_rejected;
 }
 
 bool GitPlugin::test_set_ca_certificate(const godot::String &path) {
@@ -164,7 +201,7 @@ bool GitPlugin::check_errors(int error, godot::String function, godot::String fi
 		message = message + godot::String::utf8(lg2err->message);
 	}
 
-	godot::UtilityFunctions::push_error("GitPlugin: ", sanitize_git_output(message, &creds), " in ", file, ":", function, "#L", line);
+	godot::UtilityFunctions::push_error("GitPlugin: ", sanitize_git_output(message, &creds), " in ", sanitize_git_output(file.get_file() + ":" + function, &creds), "#L", line);
 	return true;
 }
 
@@ -394,9 +431,24 @@ void GitPlugin::_create_branch(const godot::String &branch_name) {
 	GIT2_CALL(git_branch_create(Capture(branch_ref), repo.get(), CString(branch_name).data, head_commit.get(), 0), "Could not create branch from HEAD");
 }
 
+bool GitPlugin::validate_remote_url(const git_remote *remote, git_direction direction) {
+	const char *url = git_remote_directional_url(remote, direction);
+	if (url == nullptr || git_url_contains_credentials(godot::String::utf8(url))) {
+		godot::UtilityFunctions::push_error("GitPlugin: Remote URLs must not contain credentials. Use Redot's version-control credential fields instead.");
+		return false;
+	}
+	return true;
+}
+
 void GitPlugin::_create_remote(const godot::String &remote_name, const godot::String &remote_url) {
 	if (git_url_contains_credentials(remote_url)) {
 		godot::UtilityFunctions::push_error("GitPlugin: Remote URLs must not contain credentials. Use Redot's version-control credential fields instead.");
+		return;
+	}
+
+	git_remote_ptr candidate;
+	GIT2_CALL(git_remote_create_anonymous(Capture(candidate), repo.get(), CString(remote_url).data), "Could not validate remote");
+	if (!validate_remote_url(candidate.get(), GIT_DIRECTION_FETCH) || !validate_remote_url(candidate.get(), GIT_DIRECTION_PUSH)) {
 		return;
 	}
 
@@ -518,26 +570,36 @@ godot::TypedArray<godot::Dictionary> GitPlugin::_get_previous_commits(int32_t ma
 }
 
 void GitPlugin::_fetch(const godot::String &remote) {
-	godot::UtilityFunctions::print("GitPlugin: Performing fetch from ", remote);
+	godot::UtilityFunctions::print("GitPlugin: Performing fetch from ", sanitize_git_output(remote, &creds));
 
 	git_remote_ptr remote_object;
 	GIT2_CALL(git_remote_lookup(Capture(remote_object), repo.get(), CString(remote).data), "Could not lookup remote \"" + remote + "\"");
+
+	if (!validate_remote_url(remote_object.get(), GIT_DIRECTION_FETCH)) {
+		return;
+	}
+	RemoteOperation operation(&creds, git_remote_directional_url(remote_object.get(), GIT_DIRECTION_FETCH));
 
 	git_remote_callbacks remote_cbs = GIT_REMOTE_CALLBACKS_INIT;
 	remote_cbs.credentials = &credentials_cb;
 	remote_cbs.update_tips = &update_cb;
 	remote_cbs.sideband_progress = &progress_cb;
 	remote_cbs.transfer_progress = &transfer_progress_cb;
-	remote_cbs.payload = &creds;
+	remote_cbs.payload = &operation;
 	remote_cbs.push_transfer_progress = &push_transfer_progress_cb;
 	remote_cbs.push_update_reference = &push_update_reference_cb;
 
-	GIT2_CALL(git_remote_connect(remote_object.get(), GIT_DIRECTION_FETCH, &remote_cbs, nullptr, nullptr), "Could not connect to remote \"" + remote + "\". Are your credentials correct? Try using a PAT token (in case you are using Github) as your password");
+	git_remote_connect_options connect_options = GIT_REMOTE_CONNECT_OPTIONS_INIT;
+	connect_options.callbacks = remote_cbs;
+	connect_options.follow_redirects = GIT_REMOTE_REDIRECT_NONE;
+	GIT2_CALL(git_remote_connect_ext(remote_object.get(), GIT_DIRECTION_FETCH, &connect_options), "Could not connect to remote \"" + remote + "\". Are your credentials correct? Try using a PAT token (in case you are using Github) as your password");
 
 	git_fetch_options opts = GIT_FETCH_OPTIONS_INIT;
 	opts.callbacks = remote_cbs;
+	opts.follow_redirects = GIT_REMOTE_REDIRECT_NONE;
 	GIT2_CALL(git_remote_fetch(remote_object.get(), nullptr, &opts, "fetch"), "Could not fetch data from remote");
 
+	operation.flush_progress();
 	godot::UtilityFunctions::print("GitPlugin: Fetch ended");
 }
 
@@ -549,24 +611,33 @@ void GitPlugin::_pull(const godot::String &remote) {
 		return;
 	}
 
-	godot::UtilityFunctions::print("GitPlugin: Performing pull from ", remote);
+	godot::UtilityFunctions::print("GitPlugin: Performing pull from ", sanitize_git_output(remote, &creds));
 
 	git_remote_ptr remote_object;
 	GIT2_CALL(git_remote_lookup(Capture(remote_object), repo.get(), CString(remote).data), "Could not lookup remote \"" + remote + "\"");
+
+	if (!validate_remote_url(remote_object.get(), GIT_DIRECTION_FETCH)) {
+		return;
+	}
+	RemoteOperation operation(&creds, git_remote_directional_url(remote_object.get(), GIT_DIRECTION_FETCH));
 
 	git_remote_callbacks remote_cbs = GIT_REMOTE_CALLBACKS_INIT;
 	remote_cbs.credentials = &credentials_cb;
 	remote_cbs.update_tips = &update_cb;
 	remote_cbs.sideband_progress = &progress_cb;
 	remote_cbs.transfer_progress = &transfer_progress_cb;
-	remote_cbs.payload = &creds;
+	remote_cbs.payload = &operation;
 	remote_cbs.push_transfer_progress = &push_transfer_progress_cb;
 	remote_cbs.push_update_reference = &push_update_reference_cb;
 
-	GIT2_CALL(git_remote_connect(remote_object.get(), GIT_DIRECTION_FETCH, &remote_cbs, nullptr, nullptr), "Could not connect to remote \"" + remote + "\". Are your credentials correct? Try using a PAT token (in case you are using Github) as your password");
+	git_remote_connect_options connect_options = GIT_REMOTE_CONNECT_OPTIONS_INIT;
+	connect_options.callbacks = remote_cbs;
+	connect_options.follow_redirects = GIT_REMOTE_REDIRECT_NONE;
+	GIT2_CALL(git_remote_connect_ext(remote_object.get(), GIT_DIRECTION_FETCH, &connect_options), "Could not connect to remote \"" + remote + "\". Are your credentials correct? Try using a PAT token (in case you are using Github) as your password");
 
 	git_fetch_options fetch_opts = GIT_FETCH_OPTIONS_INIT;
 	fetch_opts.callbacks = remote_cbs;
+	fetch_opts.follow_redirects = GIT_REMOTE_REDIRECT_NONE;
 
 	godot::String branch_name = _get_current_branch_name();
 
@@ -581,7 +652,7 @@ void GitPlugin::_pull(const godot::String &remote) {
 	GIT2_CALL(git_repository_fetchhead_foreach(repo.get(), fetchhead_foreach_cb, &pull_merge_oid), "Could not read \"FETCH_HEAD\" file");
 
 	if (git_oid_is_zero(&pull_merge_oid)) {
-		godot::UtilityFunctions::push_error("GitPlugin: Could not find remote branch HEAD for " + branch_name + ". Try pushing the branch first.");
+		godot::UtilityFunctions::push_error(sanitize_git_output("GitPlugin: Could not find remote branch HEAD for " + branch_name + ". Try pushing the branch first.", &creds));
 		return;
 	}
 
@@ -639,26 +710,35 @@ void GitPlugin::_pull(const godot::String &remote) {
 		godot::UtilityFunctions::push_error("GitPlugin: Can not merge");
 	}
 
+	operation.flush_progress();
 	godot::UtilityFunctions::print("GitPlugin: Pull ended");
 }
 
 void GitPlugin::_push(const godot::String &remote, bool force) {
-	godot::UtilityFunctions::print("GitPlugin: Performing push to ", remote);
+	godot::UtilityFunctions::print("GitPlugin: Performing push to ", sanitize_git_output(remote, &creds));
 
 	git_remote_ptr remote_object;
 	GIT2_CALL(git_remote_lookup(Capture(remote_object), repo.get(), CString(remote).data), "Could not lookup remote \"" + remote + "\"");
+
+	if (!validate_remote_url(remote_object.get(), GIT_DIRECTION_PUSH)) {
+		return;
+	}
+	RemoteOperation operation(&creds, git_remote_directional_url(remote_object.get(), GIT_DIRECTION_PUSH));
 
 	git_remote_callbacks remote_cbs = GIT_REMOTE_CALLBACKS_INIT;
 	remote_cbs.credentials = &credentials_cb;
 	remote_cbs.update_tips = &update_cb;
 	remote_cbs.sideband_progress = &progress_cb;
 	remote_cbs.transfer_progress = &transfer_progress_cb;
-	remote_cbs.payload = &creds;
+	remote_cbs.payload = &operation;
 	remote_cbs.push_transfer_progress = &push_transfer_progress_cb;
 	remote_cbs.push_update_reference = &push_update_reference_cb;
 
 	godot::String msg = "Could not connect to remote \"" + remote + "\". Are your credentials correct? Try using a PAT token (in case you are using Github) as your password";
-	GIT2_CALL(git_remote_connect(remote_object.get(), GIT_DIRECTION_PUSH, &remote_cbs, nullptr, nullptr), msg);
+	git_remote_connect_options connect_options = GIT_REMOTE_CONNECT_OPTIONS_INIT;
+	connect_options.callbacks = remote_cbs;
+	connect_options.follow_redirects = GIT_REMOTE_REDIRECT_NONE;
+	GIT2_CALL(git_remote_connect_ext(remote_object.get(), GIT_DIRECTION_PUSH, &connect_options), msg);
 
 	godot::String branch_name = _get_current_branch_name();
 
@@ -667,9 +747,14 @@ void GitPlugin::_push(const godot::String &remote, bool force) {
 
 	git_push_options push_options = GIT_PUSH_OPTIONS_INIT;
 	push_options.callbacks = remote_cbs;
+	push_options.follow_redirects = GIT_REMOTE_REDIRECT_NONE;
 
 	GIT2_CALL(git_remote_push(remote_object.get(), &refspec, &push_options), "Failed to push");
 
+	if (operation.push_rejected) {
+		return;
+	}
+	operation.flush_progress();
 	godot::UtilityFunctions::print("GitPlugin: Push ended");
 }
 

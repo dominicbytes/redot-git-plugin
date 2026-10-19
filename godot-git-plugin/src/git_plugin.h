@@ -70,9 +70,14 @@ public:
 
 	// Helpers
 	godot::TypedArray<godot::Dictionary> _parse_diff(git_diff *p_diff);
+	bool validate_remote_url(const git_remote *remote, git_direction direction);
 	bool check_errors(int error, godot::String function, godot::String file, int line, godot::String message, const std::vector<git_error_code> &ignores = {});
 #ifdef REDOT_GIT_TEST_HARNESS
 	godot::String test_sanitize_output(const godot::String &text);
+	bool test_remote_url_allowed(const godot::String &remote, bool push);
+	godot::Array test_credential_requests(const godot::String &origin, const godot::Array &urls, int types, const godot::String &username);
+	void test_progress_packets(const godot::Array &packets);
+	bool test_push_rejection(const godot::String &status);
 	bool test_credentials_empty() const;
 	bool test_set_ca_certificate(const godot::String &path);
 #endif

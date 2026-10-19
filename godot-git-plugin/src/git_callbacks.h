@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include "godot_cpp/variant/array.hpp"
 #include "godot_cpp/variant/string.hpp"
 #include "git2.h"
@@ -14,6 +16,22 @@ struct DiffHelper {
 
 godot::String sanitize_git_output(const godot::String &text, const Credentials *credentials = nullptr);
 bool git_url_contains_credentials(const godot::String &url);
+
+const char *git_remote_directional_url(const git_remote *remote, git_direction direction);
+
+struct RemoteOperation {
+	const Credentials *credentials;
+	godot::String origin;
+	unsigned int credential_attempts = 0;
+	bool agent_attempted = false;
+	bool push_rejected = false;
+	std::string progress_line;
+	bool progress_overflow = false;
+
+	RemoteOperation(const Credentials *p_credentials, const char *url);
+	~RemoteOperation();
+	void flush_progress();
+};
 
 extern "C" int progress_cb(const char *str, int len, void *data);
 extern "C" int update_cb(const char *refname, const git_oid *a, const git_oid *b, void *data);
