@@ -49,7 +49,7 @@ The exact API evidence is stored under
 | --- | --- | --- | --- |
 | redot-cpp | Redot 26.2 branch | `598ec78e86b2c240a023f6de13daba70f7de8610` | MIT |
 | libgit2 | 1.9.7 | `49e408b3208bc3093757a1c2db938d3590f3f412` | GPL-2.0-only with linking exception and bundled notices |
-| libssh2 | 1.11.0 | `1c3f1b7da588f2652260285529ec3c1f1125eb4e` | BSD-3-Clause |
+| libssh2 | 1.11.2_DEV (master, 2026-10-16) | `3209951db4e47ef902db047d12f9f464f835c27e` | BSD-3-Clause |
 | OpenSSL | 3.6.5 | `c8bd5a57108599ac650bbae77fcabe3109dab2e8` | Apache-2.0 for current source, plus bundled legacy notices |
 
 libgit2 1.9.7 fixes SSH repository-path command injection
@@ -59,8 +59,14 @@ OpenSSL 3.6.5 includes the [2026-09-29 security advisory](https://github.com/ope
 fixes, including CVE-2026-35189 (CRLDP memory allocation) and
 CVE-2026-84783 (X.509 extension-cache use-after-free).
 
-The prior `THIRDPARTY.md` libssh2 URL named a different commit than the
-gitlink. The notice now names the actual locked gitlink above.
+libssh2 is pinned to an untagged master commit because no tagged release
+contains the [ETM decrypt heap-overflow fix](https://github.com/libssh2/libssh2/commit/42e33d81577ed4b95d4b4f6f845e5ee8efe5eeb4)
+(GHSA-6c79-444r-wx26). The pin also includes strict KEX for
+CVE-2023-48795 (Terrapin, introduced in 1.11.1), the SSH-agent infinite-loop
+fix (`d0a0210`), the decompression check (`d48eaed`), and subsequent fixes.
+Move to the next tagged release containing these fixes when one exists;
+repeat build, transport, and binary audits before changing the pin.
+See ADR-0012 in `DECISIONS.md`.
 
 ## Reproducible build policy
 

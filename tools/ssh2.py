@@ -9,6 +9,7 @@ def build_library(env, deps):
         "OPENSSL_SSL_LIBRARY": env["SSL_LIBRARY"].abspath,
         "OPENSSL_CRYPTO_LIBRARY": env["SSL_CRYPTO_LIBRARY"].abspath,
         "OPENSSL_ROOT_DIR": env["SSL_INSTALL"],
+        "LIBSSH2_BUILD_DOCS": 0,
         "BUILD_EXAMPLES": 0,
         "BUILD_TESTING": 0,
         "BUILD_SHARED_LIBS": 0,

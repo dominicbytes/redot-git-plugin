@@ -103,3 +103,21 @@
   repository name, description, README, topics, and default branch make the
   Redot target explicit. Source publication does not authorize a release tag
   or downloadable release before the remaining gates pass.
+
+## ADR-0012: Pin libssh2 master until a tagged release includes the fixes
+
+- Date: 2026-10-19
+- Status: accepted
+- Context: libssh2 1.11.0 predates strict KEX for CVE-2023-48795
+  (Terrapin). Version 1.11.1 adds strict KEX, but no tagged release
+  contains the ETM decrypt heap-overflow fix
+  `42e33d81577ed4b95d4b4f6f845e5ee8efe5eeb4` (GHSA-6c79-444r-wx26).
+- Decision: Pin unmodified libssh2 master at
+  `3209951db4e47ef902db047d12f9f464f835c27e` (2026-10-16,
+  source version `1.11.2_DEV`). This also includes the SSH-agent infinite-loop
+  fix, the decompression check, and subsequent fixes. Full commit identity,
+  rather than the development version label, defines the dependency.
+- Consequence: Accept an untagged upstream snapshot to obtain these fixes
+  without maintaining a local security patch. Move to the next tagged
+  release containing them when available, after repeating build, transport,
+  and binary audits. Keep the dependency source unmodified under ADR-0008.

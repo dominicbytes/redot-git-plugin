@@ -4,7 +4,7 @@ The Redot Git Plugin source code uses the following third-party source code:
 
 1. Redot-Engine/redot-cpp - MIT License - https://github.com/Redot-Engine/redot-cpp/tree/598ec78e86b2c240a023f6de13daba70f7de8610
 2. libgit2/libgit2 1.9.7 - GPLv2 with a special Linking Exception - https://github.com/libgit2/libgit2/tree/49e408b3208bc3093757a1c2db938d3590f3f412
-3. libssh2/libssh2 - BSD-3-Clause License - https://github.com/libssh2/libssh2/tree/1c3f1b7da588f2652260285529ec3c1f1125eb4e
+3. libssh2/libssh2 1.11.2_DEV (master, 2026-10-16) - BSD-3-Clause License - https://github.com/libssh2/libssh2/tree/3209951db4e47ef902db047d12f9f464f835c27e
 4. OpenSSL 3.6.5 - Apache License 2.0 - https://github.com/openssl/openssl/tree/c8bd5a57108599ac650bbae77fcabe3109dab2e8
 
 The complete Apache License 2.0 text shipped by the pinned OpenSSL source is
@@ -1175,48 +1175,41 @@ OF THE POSSIBILITY OF SUCH DAMAGE.
 ### libssh2/libssh2
 
 ```
-/* Copyright (c) 2004-2007 Sara Golemon <sarag@libssh2.org>
- * Copyright (c) 2005,2006 Mikhail Gusarov <dottedmag@dottedmag.net>
- * Copyright (c) 2006-2007 The Written Word, Inc.
- * Copyright (c) 2007 Eli Fant <elifantu@mail.ru>
- * Copyright (c) 2009-2021 Daniel Stenberg
+/* Copyright (C) 2004-2007 Sara Golemon <sarag@libssh2.org>
+ * Copyright (C) 2005,2006 Mikhail Gusarov <dottedmag@dottedmag.net>
+ * Copyright (C) 2006-2007 The Written Word, Inc.
+ * Copyright (C) 2007 Eli Fant <elifantu@mail.ru>
+ * Copyright (C) 2009-2023 Daniel Stenberg
  * Copyright (C) 2008, 2009 Simon Josefsson
- * Copyright (c) 2000 Markus Friedl
- * Copyright (c) 2015 Microsoft Corp.
+ * Copyright (C) 2000 Markus Friedl
+ * Copyright (C) 2015 Microsoft Corp.
  * All rights reserved.
  *
- * Redistribution and use in source and binary forms,
- * with or without modification, are permitted provided
- * that the following conditions are met:
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
  *
- *   Redistributions of source code must retain the above
- *   copyright notice, this list of conditions and the
- *   following disclaimer.
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
  *
- *   Redistributions in binary form must reproduce the above
- *   copyright notice, this list of conditions and the following
- *   disclaimer in the documentation and/or other materials
- *   provided with the distribution.
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
  *
- *   Neither the name of the copyright holder nor the names
- *   of any other contributors may be used to endorse or
- *   promote products derived from this software without
- *   specific prior written permission.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from this
+ *    software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
- * CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
- * INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
- * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
- * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
- * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
- * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
- * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
- * USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
- * OF SUCH DAMAGE.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  */
 ```
 
