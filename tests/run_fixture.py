@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
@@ -116,7 +115,7 @@ def main() -> int:
         ]
         planted_config = temp_root / "planted-openssl.cnf"
         planted_config.write_text(PLANTED_OPENSSL_CONFIG, encoding="utf-8", newline="\n")
-        provider_env = dict(os.environ, OPENSSL_CONF=str(planted_config))
+        provider_env = {"OPENSSL_CONF": str(planted_config)}
         process = run(command, project, timeout=45, env=provider_env)
         combined = process.stdout + process.stderr
         result, failures = validate(combined)
