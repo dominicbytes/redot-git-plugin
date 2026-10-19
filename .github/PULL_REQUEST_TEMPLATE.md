@@ -4,10 +4,10 @@ Describe the user-visible behavior and why this change is needed.
 
 ## Validation
 
-- [ ] Redot 26.2 API comparison passes.
+- [ ] Redot 26.2 and 26.3 API comparisons and Python unit tests pass.
 - [ ] Production library builds with `test_harness=no`.
-- [ ] Production activation fixture passes without errors or warnings.
-- [ ] Provider parity suite passes with a separate test-only build.
+- [ ] Same production binary activates on Redot 26.2 and 26.3; record any ADR-0013 classification.
+- [ ] Provider parity suite passes on both editors with the same test-only build.
 - [ ] Private HTTPS/SSH fixture passes when transport or credential code changed.
 - [ ] Changed C++ files pass clang-format.
 - [ ] `git diff --check` passes.

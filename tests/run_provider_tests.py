@@ -11,9 +11,11 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from diagnostics import check_process, engine_identity, run_process, sanitize
 from typing import Callable
 
-from provider_layout import install_provider
+from provider_layout import install_provider, install_scenario_driver
 
 
 RESULT_PREFIX = "REDOT_GIT_PROVIDER_TEST="
@@ -21,13 +23,9 @@ Prepare = Callable[[Path, Path], None]
 
 
 def run(command: list[str], cwd: Path, timeout: int = 45) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return run_process(
         command,
         cwd=cwd,
-        check=False,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=timeout,
     )
 
@@ -35,13 +33,13 @@ def run(command: list[str], cwd: Path, timeout: int = 45) -> subprocess.Complete
 def checked(command: list[str], cwd: Path) -> None:
     process = run(command, cwd)
     if process.returncode:
-        raise RuntimeError(process.stderr.strip() or process.stdout.strip())
+        raise RuntimeError(sanitize(process.stderr.strip() or process.stdout.strip()))
 
 
 def command_output(command: list[str], cwd: Path) -> str:
     process = run(command, cwd)
     if process.returncode:
-        raise RuntimeError(process.stderr.strip() or process.stdout.strip())
+        raise RuntimeError(sanitize(process.stderr.strip() or process.stdout.strip()))
     return process.stdout.strip()
 
 
@@ -50,13 +48,6 @@ def install_fixture(root: Path, temp_root: Path, provider: Path) -> Path:
     shutil.copytree(root / "tests" / "fixture", project)
     install_provider(root, project, provider)
     return project
-
-
-def import_project(redot: Path, project: Path) -> subprocess.CompletedProcess[str]:
-    return run(
-        [str(redot), "--headless", "--editor", "--path", str(project), "--import", "--quit-after", "120"],
-        project,
-    )
 
 
 def initialize_repository(project: Path, git: str) -> None:
@@ -188,29 +179,35 @@ def parse_result(output: str) -> dict[str, object]:
     raise ValueError("Redot did not emit the provider test marker")
 
 
-def run_scenario(redot: Path, project: Path, scenario: str) -> dict[str, object]:
+def run_scenario(redot: Path, project: Path, scenario: str, identity: str) -> dict[str, object]:
+    install_scenario_driver(project, "provider_scenario.gd")
     command = [
         str(redot),
-        "--headless",
+        "--headless", "--audio-driver", "Dummy",
         "--editor",
         "--path",
         str(project),
-        "--script",
-        "res://provider_scenario.gd",
         "--quit-after",
-        "180",
+        "12",
         "--",
         scenario,
     ]
     process = run(command, project)
     output = process.stdout + process.stderr
-    result = parse_result(output)
+    try:
+        result = parse_result(output)
+    except (ValueError, json.JSONDecodeError):
+        result = {"scenario": scenario, "passed": False}
+    diagnostics = check_process(process, identity=identity, result_passed=result.get("passed") is True,
+                                provider_active=True, scenario=scenario,
+                                providers_freed=result.get("providers_freed"))
     return {
         "command": command,
         "exit_code": process.returncode,
         "result": result,
         "output": output,
-        "passed": process.returncode == 0 and result.get("passed") is True,
+        "diagnostics": diagnostics,
+        "passed": diagnostics["passed"],
     }
 
 
@@ -225,6 +222,9 @@ def main() -> int:
     arguments = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
+    arguments.redot = arguments.redot.resolve()
+    arguments.provider = arguments.provider.resolve()
+    identity = engine_identity(arguments.redot, root)
     reports: list[dict[str, object]] = []
     retained: list[Path] = []
 
@@ -234,15 +234,10 @@ def main() -> int:
         project = install_fixture(root, temp_root, arguments.provider)
         if prepare is not None:
             prepare(project, temp_root)
-        import_process = import_project(arguments.redot, project)
-        report = run_scenario(arguments.redot, project, scenario)
-        report["import_exit_code"] = import_process.returncode
-        report["import_output"] = import_process.stdout + import_process.stderr
+        report = run_scenario(arguments.redot, project, scenario, identity)
         report["metadata_created"] = {
             name: (project / name).exists() for name in (".git", ".gitignore", ".gitattributes")
         }
-        if import_process.returncode:
-            report["passed"] = False
         reports.append(report)
         return temp_root, project, report
 
@@ -319,7 +314,7 @@ def main() -> int:
         if not all(conflict_report["verification"].values()):
             conflict_report["passed"] = False
 
-        resolution_report = run_scenario(arguments.redot, conflict_project, "resolve")
+        resolution_report = run_scenario(arguments.redot, conflict_project, "resolve", identity)
         resolution_parents = command_output(
             [arguments.git, "rev-list", "--parents", "-n", "1", "HEAD"], conflict_project
         ).split()
@@ -345,32 +340,37 @@ def main() -> int:
             "SENTINEL_PASSPHRASE_42",
             "SENTINEL_URL_SECRET_42",
             "SENTINEL_QUERY_SECRET_42",
-            "C:/sentinel/PUBLIC_KEY_42.pub",
-            "C:/sentinel/PRIVATE_KEY_42",
+            "C:" + chr(47) + "sentinel/PUBLIC_KEY_42.pub",
+            "C:" + chr(47) + "sentinel/PRIVATE_KEY_42",
         )
         leaked = []
         for path in security_project.rglob("*"):
             if path.is_file():
                 data = path.read_bytes()
-                leaked.extend(f"{path}:{sentinel}" for sentinel in sentinels if sentinel.encode() in data)
-        combined_output = security_report["output"] + security_report["import_output"]
-        leaked.extend(f"output:{sentinel}" for sentinel in sentinels if sentinel in combined_output)
+                leaked.extend(f"{path.relative_to(security_project).as_posix()}:sentinel" for sentinel in sentinels if sentinel.encode() in data)
+        combined_output = security_report["output"]
+        leaked.extend("output:sentinel" for sentinel in sentinels if sentinel in combined_output)
         security_report["verification"] = {"sentinel_matches": leaked}
         if leaked:
             security_report["passed"] = False
     finally:
         if arguments.keep:
             for path in retained:
-                print(f"Fixture retained at {path}", file=sys.stderr)
+                print("Fixture retained (--keep)", file=sys.stderr)
         else:
             for path in retained:
                 shutil.rmtree(path, ignore_errors=True)
 
     summary = {
+        "redot_version": identity,
         "provider_sha256": hashlib.sha256(arguments.provider.read_bytes()).hexdigest(),
         "reports": reports,
         "passed": all(report["passed"] for report in reports),
     }
+    replacements = {str(arguments.redot): "$REDOT_BIN", str(arguments.provider): "<provider binary>", str(root): "<repo clone>"}
+    replacements.update({str(path): "<temp dir>" for path in retained})
+    summary = sanitize(summary, replacements)
+    reports = summary["reports"]
     serialized = json.dumps(summary, indent=2, ensure_ascii=False)
     if arguments.output:
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
@@ -379,6 +379,7 @@ def main() -> int:
         print(serialized)
     else:
         compact = {
+            "redot_version": identity,
             "provider_sha256": summary["provider_sha256"],
             "passed": summary["passed"],
             "reports": [
@@ -386,6 +387,8 @@ def main() -> int:
                     "scenario": report["result"].get("scenario"),
                     "passed": report["passed"],
                     "exit_code": report["exit_code"],
+                    "outcome": report["diagnostics"]["outcome"],
+                    "failures": report["diagnostics"]["failures"],
                     "verification": report.get("verification"),
                 }
                 for report in reports
@@ -396,4 +399,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as error:
+        print(sanitize(str(error)), file=sys.stderr)
+        sys.exit(1)

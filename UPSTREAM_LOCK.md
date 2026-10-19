@@ -1,7 +1,7 @@
 # Upstream and dependency lock
 
 This file defines the source and binary provenance for
-`3.2.1-redot.26.2.1`. Full commit IDs are authoritative; branch and version
+`3.2.1-redot.26.3.1`. Full commit IDs are authoritative; branch and version
 names are descriptive only.
 
 ## Provider baseline
@@ -10,17 +10,17 @@ names are descriptive only.
 | --- | --- |
 | Upstream repository | `https://github.com/godotengine/godot-git-plugin` |
 | Downstream fork | `https://github.com/dominicbytes/redot-git-plugin` |
-| Downstream default branch | `redot-26.2` |
+| Downstream release branch | `redot-26.3` |
 | Upstream release lineage | `v3.2.1` plus four commits |
 | Provider commit | `de3324668df0ee52aeff8f4ab28db0a48203f514` |
 | Provider commit time | `2026-07-30T18:27:01Z` |
-| Downstream version | `3.2.1-redot.26.2.1` |
-| Downstream intent | Redot 26.2 editor-only adaptation; retain full upstream history |
+| Downstream version | `3.2.1-redot.26.3.1` |
+| Downstream intent | Redot 26.2 and 26.3 editor-only adaptation; retain full upstream history |
 | License | MIT, with bundled dependency notices in `THIRDPARTY.md` |
 
 The reproducibility epoch is `1785436021`, the provider commit time in UTC.
 
-## Redot target
+## Redot 26.2 binding baseline and supported target
 
 | Field | Locked value |
 | --- | --- |
@@ -42,6 +42,30 @@ The exact API evidence is stored under
 `api/redot-26.2/4f5b14abade2239104847d03d8f9056e4467cfcd/`.
 `scripts/compare_vcs_api.py` verifies those hashes and the 23-method
 `EditorVCSInterface` contract before a release build is packaged.
+
+## Redot 26.3 supported runtime target
+
+| Field | Locked value |
+| --- | --- |
+| Redot release | `redot-26.3-stable` |
+| Editor identity | `26.3.stable.official.85e520394` |
+| Engine commit | `85e5203945af15755dd2f66cb6fdf7545fd88c0b` |
+| API lineage | Godot-compatible 4.5.2; Redot 26.3.0 stable official |
+| Precision | single |
+| Windows release asset | `Redot_v26.3-stable_windows_win64.zip` |
+| Windows asset SHA-256 | `2c6c7b4e96a88ca44eb413d9a5d43b8468b60a346c2448854c1a0c6bc9baab76` |
+| Linux release asset | `Redot_v26.3-stable_linux_x64.zip` |
+| Linux asset SHA-256 | `7d5155b80f4262f0a394c5040e539bb330cb63dd147bedd9172d83ec2efdbd91` |
+| macOS release asset | `Redot_v26.3-stable_macos_universal.zip` |
+| macOS asset SHA-256 | `bf781ae53dfaa4bbc6aadd21ebf2c69da3681ed85894d3ab2a816f0b03755a34` |
+
+The exact runtime-target evidence is under
+`api/redot-26.3/85e5203945af15755dd2f66cb6fdf7545fd88c0b/`.
+The 26.2 binding/API baseline above is retained unchanged. The pinned
+redot-cpp cannot generate bindings for 26.3's added Struct variant; do not
+build it against the 26.3 JSON. One binary built on 26.2 supports both editors.
+The comparison verifies both sets of evidence and equality of the complete
+VCS class surface, including the same 23 required methods.
 
 ## Native dependency gitlinks
 
@@ -82,15 +106,5 @@ See ADR-0012 in `DECISIONS.md`.
 - The package command fails when any platform is missing or a binary contains
   test-harness markers.
 
-The verified clean production libraries are:
-
-| Platform | Size | SHA-256 | Local proof |
-| --- | ---: | --- | --- |
-| Windows x86-64 | 7,860,224 | `fe658e70083537c5f928416ffa70fb4c8d30b6379836c8c6a47ec5ef22a14573` | PE/dependency/path/test-marker audit, no-op hash identity, clean Redot activation |
-| Linux x86-64 | 11,974,840 | `23f35514f3f6cfd21e6d5a13cffee34cd583c1fe338076e0212c3ccdba320ae8` | ELF/dependency/path/test-marker audit, no-op hash identity, clean Redot activation |
-
-The matching Windows export template executable has SHA-256
-`723097ce13cc7c28202ce67337f167d15482ea57147be33ea1c5d7818a45b137`
-and identifies itself as `26.2.stable.official.4f5b14aba`. macOS and the full
-release archive are generated only from fresh CI artifacts and are not
-predeclared here.
+Production binary sizes, SHA-256 hashes, audit records, and archive checksums
+are produced by CI for this release. They are not predeclared here.

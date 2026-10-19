@@ -13,14 +13,14 @@ body:
     attributes:
       label: Redot version
       description: Include the engine commit for a custom build.
-      placeholder: 26.2.stable.official.4f5b14aba
+      placeholder: 26.3.stable.official.85e520394 (also supports 26.2)
     validations:
       required: true
   - type: input
     attributes:
       label: Plugin version
       description: Include the Git commit for a development build.
-      placeholder: 3.2.1-redot.26.2.1
+      placeholder: 3.2.1-redot.26.3.1
     validations:
       required: true
   - type: input

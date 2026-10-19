@@ -13,7 +13,7 @@ from pathlib import Path
 
 ENGINE_COMMIT = "4f5b14abade2239104847d03d8f9056e4467cfcd"
 REDOT_CPP_COMMIT = "598ec78e86b2c240a023f6de13daba70f7de8610"
-API_RELATIVE = Path("api") / "redot-26.2" / ENGINE_COMMIT
+ENGINE_26_3_COMMIT = "85e5203945af15755dd2f66cb6fdf7545fd88c0b"
 
 EXPECTED_HASHES = {
     "extension_api.json": "453a0cc128bb58333a001f7f43573a5961d973fb7b151af43139869f22d5915c",
@@ -22,6 +22,27 @@ EXPECTED_HASHES = {
     "editor_vcs_interface.cpp": "f506c3d9b3fd6ea9f3803ce19b793b4e6723d1ba0713372f75dd4ae9cca98137",
     "editor_vcs_interface.h": "b21426608f8e8457f3e9e59fb63322de2779e5afb64f7c2f3b951e7cd6cc8fd8",
 }
+
+TARGETS = {
+    "26.2": (ENGINE_COMMIT, EXPECTED_HASHES),
+    "26.3": (ENGINE_26_3_COMMIT, EXPECTED_HASHES | {
+        "extension_api.json": "4c709d5920855dfe7294d01b9899d21aec4e94d3df9fc46f7aa90ad8fff5a38e",
+        "gdextension_interface.h": "558c1f54f5e37afdf259fec29d6eb72da83781afdce48e51a1783942f9cf9895",
+    }),
+}
+
+
+def loader_accepts(minimum: str, redot: tuple[int, int, int],
+                   godot: tuple[int, int, int], disable_godot_checks: bool = False) -> bool:
+    """Mirror the loader's minimum gate and Godot-version fallback."""
+    parts = minimum.split(".")
+    # The loader reads major/minor/patch, defaulting absent components to zero.
+    version = tuple(max(0, int(part)) if re.fullmatch(r"[+-]?\d+", part) else 0
+                    for part in (parts + ["0", "0"])[:3])
+    return version >= (4, 1, 0) and (
+        version <= redot or (not disable_godot_checks and version <= godot)
+    )
+
 
 EXPECTED_ENUMS = {
     "ChangeType": {
@@ -151,15 +172,12 @@ def extract_schema(source: str, function_name: str) -> list[str]:
     return []
 
 
-def version_tuple(value: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in value.split("."))
-
-
-def compare(root: Path) -> tuple[str, bool]:
-    api_dir = root / API_RELATIVE
+def compare(root: Path, target: str = "26.2") -> tuple[str, bool]:
+    engine_commit, expected_hashes = TARGETS[target]
+    api_dir = root / "api" / f"redot-{target}" / engine_commit
     failures: list[str] = []
     hash_rows = []
-    for name, expected in EXPECTED_HASHES.items():
+    for name, expected in expected_hashes.items():
         path = api_dir / name
         actual = sha256(path) if path.is_file() else "missing"
         result = "PASS" if actual == expected else "FAIL"
@@ -175,6 +193,12 @@ def compare(root: Path) -> tuple[str, bool]:
         for item in editor_class["methods"]
         if item.get("is_virtual") and item.get("is_required")
     }
+    if len(required_methods) != 23:
+        failures.append("expected exactly 23 required virtuals")
+    baseline = json.loads((root / "api" / "redot-26.2" / ENGINE_COMMIT / "extension_api.json").read_text(encoding="utf-8"))
+    baseline_class = next(item for item in baseline["classes"] if item["name"] == "EditorVCSInterface")
+    if editor_class != baseline_class:
+        failures.append("VCS surface differs from 26.2 baseline")
     provider_methods = parse_provider_header(root / "godot-git-plugin" / "src" / "git_plugin.h")
 
     method_rows = []
@@ -221,6 +245,7 @@ def compare(root: Path) -> tuple[str, bool]:
     manifest = (root / "addons" / "godot-git-plugin" / "git_plugin.gdextension").read_text(encoding="utf-8")
     minimum_match = re.search(r'compatibility_minimum\s*=\s*"([^"]+)"', manifest)
     minimum = minimum_match.group(1) if minimum_match else "missing"
+    disable_godot_checks = bool(re.search(r"disable_godot_checks\s*=\s*true", manifest))
     registration_checks = {
         "Direct EditorVCSInterface subclass": "class GitPlugin : public godot::EditorVCSInterface" in provider_header,
         "ClassDB name remains GitPlugin": "register_class<GitPlugin>()" in registration_source,
@@ -228,9 +253,12 @@ def compare(root: Path) -> tuple[str, bool]:
         "Manifest and exported entry symbol agree": (
             'entry_symbol = "git_plugin_init"' in manifest and "git_plugin_init(" in registration_source
         ),
-        "Manifest minimum accepts Redot lineage 4.5.2": (
-            minimum != "missing" and version_tuple(minimum) <= (4, 5, 2)
+        "Manifest minimum accepted by Redot loader": (
+            minimum != "missing" and loader_accepts(minimum, (26, int(target.split(".")[1]), 0), (4, 5, 2), disable_godot_checks)
         ),
+        "Manifest minimum retains 4.3": minimum == "4.3",
+        "VCS surface equals the 26.2 baseline": editor_class == baseline_class,
+        "Exactly 23 required virtuals": len(required_methods) == 23,
     }
     for name, passed in registration_checks.items():
         if not passed:
@@ -243,8 +271,9 @@ def compare(root: Path) -> tuple[str, bool]:
         "",
         "## Locked target",
         "",
-        f"- Redot engine commit: `{ENGINE_COMMIT}`",
-        f"- Redot C++ binding commit: `{REDOT_CPP_COMMIT}`",
+        f"- Redot engine commit: `{engine_commit}`",
+        f"- Redot editor identity: `{target}.stable.official.{engine_commit[:9]}`",
+        f"- Retained 26.2 C++ binding commit: `{REDOT_CPP_COMMIT}`",
         f"- API identity: `{header['version_full_name']}`",
         f"- API version: `{header['version_major']}.{header['version_minor']}.{header['version_patch']}`",
         f"- Precision: `{header['precision']}`",
@@ -261,7 +290,7 @@ def compare(root: Path) -> tuple[str, bool]:
             "",
             "## Required virtual methods",
             "",
-            "| Method | Redot 26.2 contract | Provider declaration | Decision |",
+            f"| Method | Redot {target} contract | Provider declaration | Decision |",
             "|---|---|---|---|",
         ]
     )
@@ -302,7 +331,7 @@ def compare(root: Path) -> tuple[str, bool]:
             "## Verdict",
             "",
             (
-                "PASS — the upstream provider surface is source-compatible with the pinned Redot 26.2 contract. "
+                f"PASS — the provider surface is source-compatible with the pinned Redot {target} contract. "
                 "No adapter class, endpoint rename, enum translation, or helper-schema translation is required."
                 if not failures
                 else "FAIL — unresolved rows: " + ", ".join(failures) + "."
@@ -319,18 +348,23 @@ def compare(root: Path) -> tuple[str, bool]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--output", type=Path)
+    parser.add_argument("--output", type=Path, help="26.2 report; 26.3 is written alongside with a -26.3 suffix")
     arguments = parser.parse_args()
 
-    report, passed = compare(arguments.root.resolve())
-    if arguments.output:
-        output = arguments.output
-        if not output.is_absolute():
-            output = arguments.root / output
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(report, encoding="utf-8", newline="\n")
-    else:
-        print(report, end="")
+    passed = True
+    for target in TARGETS:
+        report, target_passed = compare(arguments.root.resolve(), target)
+        passed = passed and target_passed
+        if arguments.output:
+            output = arguments.output
+            if target == "26.3":
+                output = output.with_stem(output.stem + "-26.3")
+            if not output.is_absolute():
+                output = arguments.root / output
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(report, encoding="utf-8", newline="\n")
+        else:
+            print(report, end="")
     return 0 if passed else 1
 
 

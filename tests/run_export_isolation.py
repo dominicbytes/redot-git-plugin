@@ -12,6 +12,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from diagnostics import check_process, engine_identity, run_process, sanitize
+
 
 PRESET_NAME = "Redot Git Export Isolation"
 ADDON_EXPORT_EXCLUDE = "addons/godot-git-plugin/*"
@@ -38,13 +40,9 @@ def sha256(path: Path) -> str:
 def run(
     command: list[str], cwd: Path, timeout: int = 180
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return run_process(
         command,
         cwd=cwd,
-        check=False,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=timeout,
     )
 
@@ -146,12 +144,6 @@ codesign/enable=false
     return project / "dist" / str(config["output"])
 
 
-def suspicious_log_markers(output: str) -> list[str]:
-    return [
-        marker
-        for marker in ("WARNING:", "ERROR:", "SCRIPT ERROR:", "FATAL:", "CRASH")
-        if marker in output
-    ]
 
 
 def main() -> int:
@@ -163,6 +155,9 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--keep", action="store_true")
     arguments = parser.parse_args()
+    arguments.redot = arguments.redot.resolve()
+    arguments.addon_root = arguments.addon_root.resolve()
+    arguments.template = arguments.template.resolve()
 
     for label, path in (
         ("Redot editor", arguments.redot),
@@ -170,17 +165,18 @@ def main() -> int:
         ("export template", arguments.template),
     ):
         if not path.exists():
-            parser.error(f"{label} does not exist: {path}")
+            parser.error(f"{label} does not exist")
 
     manifest = arguments.addon_root / "git_plugin.gdextension"
     if not manifest.is_file():
-        parser.error(f"addon manifest does not exist: {manifest}")
+        parser.error("addon manifest does not exist")
 
     temp_root = Path(tempfile.mkdtemp(prefix="redot-git-export-"))
     project = temp_root / "project"
     project.mkdir()
     failures: list[str] = []
     try:
+        identity = engine_identity(arguments.redot.resolve(), temp_root)
         executable = write_fixture(
             project, arguments.addon_root, arguments.platform, arguments.template
         )
@@ -189,7 +185,7 @@ def main() -> int:
         import_process = run(
             [
                 str(arguments.redot),
-                "--headless",
+                "--headless", "--audio-driver", "Dummy",
                 "--editor",
                 "--path",
                 str(project),
@@ -203,9 +199,11 @@ def main() -> int:
         export_process = run(
             [
                 str(arguments.redot),
-                "--headless",
+                "--headless", "--audio-driver", "Dummy",
                 "--path",
                 str(project),
+                "--quit-after",
+                "120",
                 "--export-release",
                 PRESET_NAME,
                 str(executable),
@@ -213,17 +211,10 @@ def main() -> int:
             project,
             timeout=240,
         )
-        if import_process.returncode:
-            failures.append(f"Redot import exited with {import_process.returncode}")
-        if export_process.returncode:
-            failures.append(f"Redot export exited with {export_process.returncode}")
-        for label, process in (
-            ("import", import_process),
-            ("export", export_process),
-        ):
-            markers = suspicious_log_markers(process.stdout + process.stderr)
-            if markers:
-                failures.append(f"{label} log contained: {', '.join(markers)}")
+        import_diagnostics = check_process(import_process, identity=identity)
+        export_diagnostics = check_process(export_process, identity=identity)
+        failures.extend(import_diagnostics["failures"])
+        failures.extend(export_diagnostics["failures"])
         if not executable.is_file():
             failures.append("exported executable was not created")
 
@@ -261,7 +252,9 @@ def main() -> int:
             run_process = run(
                 [
                     str(executable),
-                    "--headless",
+                    "--headless", "--audio-driver", "Dummy",
+                    "--quit-after",
+                    "120",
                     "--",
                     "--redot-git-result=" + result_path.resolve().as_posix(),
                 ],
@@ -269,15 +262,9 @@ def main() -> int:
                 timeout=60,
             )
             run_exit_code = run_process.returncode
-            run_markers = suspicious_log_markers(
-                run_process.stdout + run_process.stderr
-            )
-            if run_process.returncode:
-                failures.append(f"exported game exited with {run_process.returncode}")
-            if run_markers:
-                failures.append(
-                    "exported game log contained: " + ", ".join(run_markers)
-                )
+            runtime_diagnostics = check_process(run_process, identity=identity)
+            run_markers = runtime_diagnostics["failures"]
+            failures.extend(run_markers)
             if not result_path.is_file():
                 failures.append("exported game did not write its isolation result")
             else:
@@ -285,10 +272,8 @@ def main() -> int:
                 if runtime_result.get("passed") is not True:
                     failures.append("GitPlugin was visible in the exported game")
 
-        version_process = run([str(arguments.redot), "--version"], project, timeout=15)
-        template_version_process = run(
-            [str(arguments.template), "--version"], project, timeout=15
-        )
+        version = identity
+        template_version = engine_identity(arguments.template.resolve(), project)
         report = {
             "distribution": [
                 {
@@ -300,14 +285,10 @@ def main() -> int:
             ],
             "export_exit_code": export_process.returncode,
             "export_exclude_filter": ADDON_EXPORT_EXCLUDE,
-            "export_log_markers": suspicious_log_markers(
-                export_process.stdout + export_process.stderr
-            ),
+            "export_diagnostics": export_diagnostics,
             "failures": failures,
             "import_exit_code": import_process.returncode,
-            "import_log_markers": suspicious_log_markers(
-                import_process.stdout + import_process.stderr
-            ),
+            "import_diagnostics": import_diagnostics,
             "passed": not failures,
             "platform": arguments.platform,
             "provider_binaries": [
@@ -321,13 +302,14 @@ def main() -> int:
             "provider_files_in_distribution": sorted(
                 set(copied_provider_files + copied_provider_names)
             ),
-            "redot_version": version_process.stdout.strip(),
+            "redot_version": version,
             "run_exit_code": run_exit_code,
             "run_log_markers": run_markers,
             "runtime_result": runtime_result,
             "template_sha256": sha256(arguments.template),
-            "template_version": template_version_process.stdout.strip(),
+            "template_version": template_version,
         }
+        report = sanitize(report, {str(arguments.redot.resolve()): "$REDOT_BIN", str(temp_root): "<temp dir>"})
         serialized = json.dumps(report, indent=2, sort_keys=True) + "\n"
         if arguments.output:
             arguments.output.parent.mkdir(parents=True, exist_ok=True)
@@ -341,15 +323,19 @@ def main() -> int:
             if run_process is not None:
                 failed_processes.append(("runtime", run_process))
             for label, process in failed_processes:
-                print(f"--- {label} stdout ---\n{process.stdout}", file=sys.stderr)
-                print(f"--- {label} stderr ---\n{process.stderr}", file=sys.stderr)
+                print(f"--- {label} stdout ---\n{sanitize(process.stdout)}", file=sys.stderr)
+                print(f"--- {label} stderr ---\n{sanitize(process.stderr)}", file=sys.stderr)
         return 1 if failures else 0
     finally:
         if arguments.keep:
-            print(f"Fixture retained at {temp_root}", file=sys.stderr)
+            print("Fixture retained (--keep)", file=sys.stderr)
         else:
             shutil.rmtree(temp_root, ignore_errors=True)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as error:
+        print(sanitize(str(error)), file=sys.stderr)
+        raise SystemExit(1)

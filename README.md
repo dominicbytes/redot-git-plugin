@@ -7,9 +7,9 @@
 > [!IMPORTANT]
 > This is the Redot-specific downstream fork of
 > [`godotengine/godot-git-plugin`](https://github.com/godotengine/godot-git-plugin).
-> It targets Redot 26.2; Godot users should use the upstream plugin.
+> It targets Redot 26.2 and 26.3; Godot users should use the upstream plugin.
 
-An editor-only Git provider for Redot 26.2. It implements Redot's existing
+An editor-only Git provider for Redot 26.2 and 26.3. It implements Redot's existing
 `EditorVCSInterface` with libgit2; Redot continues to own the Version Control
 dock, dialogs, diffs, and confirmations.
 
@@ -41,7 +41,8 @@ project with Git first, either through Redot's own metadata workflow or with
 
 | Component | Supported target |
 | --- | --- |
-| Redot | 26.2 stable, engine commit `4f5b14abade2239104847d03d8f9056e4467cfcd` |
+| Redot 26.2 | Stable, engine commit `4f5b14abade2239104847d03d8f9056e4467cfcd` |
+| Redot 26.3 | Stable, engine commit `85e5203945af15755dd2f66cb6fdf7545fd88c0b` |
 | Windows | x86-64 editor |
 | Linux | x86-64 editor |
 | macOS | Universal editor binary: arm64 and x86-64 |
@@ -50,6 +51,25 @@ project with Git first, either through Redot's own metadata workflow or with
 The GDExtension manifest uses Redot's Godot-compatible API lineage. This
 package is built and tested for Redot, and does not claim compatibility with
 upstream Godot releases.
+
+Both editors use the same binary built with the retained 26.2 redot-cpp/API
+baseline. CI verifies both API contracts, then activates each platform's
+production binary on both official editors. Windows additionally runs the
+provider parity suite on both versions using one test-only binary.
+
+The official 26.3 editor has intermittent headless shutdown defects also
+reproduced without the plugin. Tests report `known_engine_shutdown_crash`
+and `known_engine_shutdown_leak` separately after a passing scenario and
+completed provider shutdown on the exact pinned official identity. Reported
+provider instances must be freed. A crash without a banner additionally
+requires the exact Windows access-violation status, explicit confirmation
+that all providers were freed, and only allowlisted output. Shutdown also
+emits its marker after refused initialization when nothing needs releasing.
+Import-only exits use `known_engine_import_crash` or, for exit zero with
+only allowlisted RID/ObjectDB leaks, `known_engine_import_leak`. Both require
+no provider activity or plugin frames. Unknown diagnostics and earlier
+failures remain fatal. A patched 26.3 editor provides a clean local
+cross-check; see ADR-0014 for the exceptions' removal condition.
 
 ## Installation
 
@@ -116,16 +136,19 @@ fails closed.
 
 ## Validation
 
-Set `REDOT_BIN` to the Redot 26.2 console editor and run the contract and
-production smoke checks:
+Set `REDOT_BIN` to each supported console editor (26.2, then 26.3) and run
+the production smoke checks with the same binary. Verify both contracts and
+the diagnostics classifier:
 
 ```shell
-python scripts/compare_vcs_api.py
+python scripts/compare_vcs_api.py --output reports/api-diffs/git-editor-vcs-interface.md
+python -m unittest discover -s tests -p "test_*.py" -v
 python tests/run_fixture.py --redot "$REDOT_BIN" --provider <production-library>
 python scripts/audit_binary.py --platform <windows|linux|macos> --binary <production-library>
 ```
 
-Build a separate test-only library and run the complete local parity suite:
+Build a separate test-only library and run the complete local parity suite
+with both editors:
 
 ```shell
 scons platform=windows arch=x86_64 build_profile=build_profile.json debug_symbols=no test_harness=yes target_path=addons/redot-git-test/

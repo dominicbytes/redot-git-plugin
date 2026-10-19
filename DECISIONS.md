@@ -121,3 +121,57 @@
   without maintaining a local security patch. Move to the next tagged
   release containing them when available, after repeating build, transport,
   and binary audits. Keep the dependency source unmodified under ADR-0008.
+
+## ADR-0013: Support both editors on the retained 26.2 binding baseline
+
+- Date: 2026-10-19
+- Status: accepted
+- Decision: Build one provider using the pinned 26.2 redot-cpp and 26.2 API
+  evidence; activate that same binary on Redot 26.2 and 26.3 on every platform.
+- Context: The engine VCS XML/header/source and 23-method contract are
+  unchanged. There is no 26.3 redot-cpp release, and its added Struct variant
+  prevents generation with the pinned bindings.
+- Consequence: Keep separate API reports so each target's hashes and identity
+  remain auditable. The 26.3 JSON is runtime evidence only. This extends the
+  runtime target in ADR-0004 without replacing its binding baseline.
+
+## ADR-0014: Classify exact official 26.3 exit defects temporarily
+
+- Date: 2026-10-19
+- Status: temporary
+- Decision: Report `known_engine_shutdown_crash` only for exact identity
+  `26.3.stable.official.85e520394`, a known access-violation exit, passing
+  scenario result, and successful provider shutdown marker before the crash
+  banner. Without a banner, require exactly the Windows access-violation
+  status (0xC0000005, signed or unsigned), explicit confirmation that every
+  provider instance was freed, and only allowlisted output lines. Report
+  `known_engine_shutdown_leak` separately for exit zero with
+  the same identity, passing result, completed shutdown, and only documented
+  RID/ObjectDB exit leaks. Require freed instances when the fixture reports
+  their lifetime. Successful shutdown emits the same marker when
+  initialization was refused and there is no libgit2 state to release.
+  The non-repository fixture still calls shutdown and frees its provider.
+- Context: The official editor reproduces these shutdown defects without the
+  plugin; a patched 26.3 editor supplies the clean runtime cross-check.
+- Decision: A verified editor-only `--import` command may report
+  `known_engine_import_crash` for the same exact identity and crash exit only
+  when no provider initialization, activity, or plugin frame appears.
+  Under those same constraints, exit zero with only allowlisted output and
+  RID/ObjectDB leak diagnostics is `known_engine_import_leak`; no shutdown
+  marker is required because import never initialized the provider. Clean
+  imports remain clean passes. A real scenario without completed provider
+  shutdown remains fatal.
+- Consequence: Timeouts, missing/failed results, load failures, unknown
+  diagnostics, unfreed providers, and other engine identities remain fatal.
+  Keep all environmental categories separate from clean passes. Remove the
+  exceptions and leak allowlist once CI pins an official engine with the
+  shutdown fix and clean activation and parity pass on all platforms.
+
+## ADR-0015: Use redot-26.3 for the new release line
+
+- Date: 2026-10-19
+- Status: accepted
+- Decision: Develop `3.2.1-redot.26.3.1` on `redot-26.3`, retaining support
+  for Redot 26.2 as well as 26.3.
+- Consequence: The branch names the new release line; it does not change the
+  retained binding baseline or rewrite upstream history.

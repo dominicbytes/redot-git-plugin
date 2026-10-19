@@ -17,17 +17,17 @@ env:
 
 jobs:
   api-contract:
-    name: Redot 26.2 API contract
+    name: Redot 26.2 and 26.3 API contracts
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
       - name: Compare EditorVCSInterface contracts
         run: |
-          python scripts/compare_vcs_api.py
-          git diff --exit-code -- reports/api-diffs/git-editor-vcs-interface.md
+          python scripts/compare_vcs_api.py --output reports/api-diffs/git-editor-vcs-interface.md
+          git diff --exit-code -- reports/api-diffs/
       - name: Run Python unit tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
       - name: Validate Python tooling
@@ -38,9 +38,12 @@ jobs:
           scripts/binary_formats.py
           scripts/binary_scan.py
           scripts/package_release.py
-          tests/test_release_tools.py
           tests/run_fixture.py
           tests/provider_layout.py
+          tests/diagnostics.py
+          tests/test_diagnostics.py
+          tests/test_api_contract.py
+          tests/test_release_tools.py
           tests/run_provider_tests.py
           tests/run_private_transport_tests.py
           tests/run_export_isolation.py
@@ -49,10 +52,10 @@ jobs:
     name: Linux x86_64 production
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
       - name: Install build tools
@@ -79,10 +82,25 @@ jobs:
           redot_bin="$(find redot -maxdepth 2 -type f -name 'redot*.x86_64' | head -n 1)"
           chmod +x "$redot_bin"
           "$redot_bin" --version
+          test "$("$redot_bin" --version)" = "26.2.stable.official.4f5b14aba"
           python tests/run_fixture.py \
             --redot "$redot_bin" \
             --provider addons/godot-git-plugin/linux/libgit_plugin.linux.editor.x86_64.so
-      - uses: actions/upload-artifact@v7
+      - name: Activate same production provider in Redot 26.3
+        run: |
+          curl --fail --location --silent --show-error \
+            https://github.com/Redot-Engine/redot-engine/releases/download/redot-26.3-stable/Redot_v26.3-stable_linux_x64.zip \
+            --output redot-26.3.zip
+          echo "7d5155b80f4262f0a394c5040e539bb330cb63dd147bedd9172d83ec2efdbd91  redot-26.3.zip" | sha256sum --check
+          unzip -q redot-26.3.zip -d redot-26.3
+          redot_bin="$(find redot-26.3 -maxdepth 2 -type f -name 'redot*.x86_64' | head -n 1)"
+          chmod +x "$redot_bin"
+          "$redot_bin" --version
+          test "$("$redot_bin" --version)" = "26.3.stable.official.85e520394"
+          python tests/run_fixture.py \
+            --redot "$redot_bin" \
+            --provider addons/godot-git-plugin/linux/libgit_plugin.linux.editor.x86_64.so
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: redot-git-linux-x86_64-${{ github.sha }}
           if-no-files-found: error
@@ -94,18 +112,19 @@ jobs:
           if-no-files-found: error
           path: reports/binary-audits/linux-x86_64.json
 
+
   windows-x86_64:
     name: Windows x86_64 production and provider suite
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
-      - uses: ilammy/msvc-dev-cmd@v1
-      - uses: ilammy/setup-nasm@v1
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+      - uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1
       - name: Install SCons
         run: python -m pip install scons==4.10.1
       - name: Build production provider
@@ -128,28 +147,42 @@ jobs:
           $expected = "4644c7591bbe8019b861deb0ccdb64fd4f59a88514abf7c788cf176c259855af"
           if ($actual -ne $expected) { throw "Redot archive checksum mismatch: $actual" }
           Expand-Archive -LiteralPath redot.zip -DestinationPath redot
-      - name: Activate production provider in Redot
+      - name: Download pinned Redot 26.3 editor
         shell: powershell
         run: |
-          $redot = (Get-ChildItem -LiteralPath redot -Recurse -Filter *.console.exe -File | Select-Object -First 1).FullName
-          python tests\run_fixture.py `
-            --redot $redot `
-            --provider .\addons\godot-git-plugin\windows\libgit_plugin.windows.editor.x86_64.dll
+          $url = "https://github.com/Redot-Engine/redot-engine/releases/download/redot-26.3-stable/Redot_v26.3-stable_windows_win64.zip"
+          Invoke-WebRequest -Uri $url -OutFile redot-26.3.zip
+          $actual = (Get-FileHash -Algorithm SHA256 redot-26.3.zip).Hash.ToLowerInvariant()
+          $expected = "2c6c7b4e96a88ca44eb413d9a5d43b8468b60a346c2448854c1a0c6bc9baab76"
+          if ($actual -ne $expected) { throw "Redot archive checksum mismatch: $actual" }
+          Expand-Archive -LiteralPath redot-26.3.zip -DestinationPath redot-26.3
+      - name: Activate same production provider in both editors
+        shell: powershell
+        run: |
+          $targets = @{ "redot" = "26.2.stable.official.4f5b14aba"; "redot-26.3" = "26.3.stable.official.85e520394" }
+          foreach ($folder in $targets.Keys) {
+            $redot = (Get-ChildItem -LiteralPath $folder -Recurse -Filter *.console.exe -File | Select-Object -First 1).FullName
+            $identity = & $redot --version
+            Write-Output $identity
+            if ($LASTEXITCODE -ne 0 -or $identity -ne $targets[$folder]) { throw "Unexpected Redot identity" }
+            python tests/run_fixture.py --redot $redot --provider addons/godot-git-plugin/windows/libgit_plugin.windows.editor.x86_64.dll
+            if ($LASTEXITCODE -ne 0) { throw "Production activation failed" }
+          }
       - name: Build test-only provider
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path addons\redot-git-test | Out-Null
           scons platform=windows arch=x86_64 build_profile=build_profile.json debug_symbols=no test_harness=yes target_path=addons/redot-git-test/
-      - name: Run provider parity suite
+      - name: Run provider parity suite on both editors
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path reports\ci | Out-Null
-          $redot = (Get-ChildItem -LiteralPath redot -Recurse -Filter *.console.exe -File | Select-Object -First 1).FullName
-          python tests\run_provider_tests.py `
-            --redot $redot `
-            --provider .\addons\redot-git-test\windows\libgit_plugin.windows.editor.x86_64.dll `
-            --output reports\ci\provider-suite.json
-      - uses: actions/upload-artifact@v7
+          New-Item -ItemType Directory -Force -Path reports/ci | Out-Null
+          foreach ($folder in @("redot", "redot-26.3")) {
+            $redot = (Get-ChildItem -LiteralPath $folder -Recurse -Filter *.console.exe -File | Select-Object -First 1).FullName
+            python tests/run_provider_tests.py --redot $redot --provider addons/redot-git-test/windows/libgit_plugin.windows.editor.x86_64.dll --output "reports/ci/provider-suite-$folder.json"
+            if ($LASTEXITCODE -ne 0) { throw "Provider parity suite failed" }
+          }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: redot-git-windows-x86_64-${{ github.sha }}
           if-no-files-found: error
@@ -160,21 +193,22 @@ jobs:
           name: redot-git-audit-windows-x86_64-${{ github.sha }}
           if-no-files-found: error
           path: reports/binary-audits/windows-x86_64.json
-      - uses: actions/upload-artifact@v7
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: redot-git-windows-evidence-${{ github.sha }}
           if-no-files-found: warn
-          path: reports/ci/provider-suite.json
+          path: reports/ci/provider-suite-*.json
 
   macos-universal:
     name: macOS universal production
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
       - name: Install build tools
@@ -200,10 +234,25 @@ jobs:
           redot_bin="$(find redot -type f -path '*/Contents/MacOS/*' | head -n 1)"
           chmod +x "$redot_bin"
           "$redot_bin" --version
+          test "$("$redot_bin" --version)" = "26.2.stable.official.4f5b14aba"
           python tests/run_fixture.py \
             --redot "$redot_bin" \
             --provider addons/godot-git-plugin/macos/libgit_plugin.macos.editor.universal.dylib
-      - uses: actions/upload-artifact@v7
+      - name: Activate same production provider in Redot 26.3
+        run: |
+          curl --fail --location --silent --show-error \
+            https://github.com/Redot-Engine/redot-engine/releases/download/redot-26.3-stable/Redot_v26.3-stable_macos_universal.zip \
+            --output redot-26.3.zip
+          echo "bf781ae53dfaa4bbc6aadd21ebf2c69da3681ed85894d3ab2a816f0b03755a34  redot-26.3.zip" | shasum -a 256 --check
+          unzip -q redot-26.3.zip -d redot-26.3
+          redot_bin="$(find redot-26.3 -type f -path '*/Contents/MacOS/*' | head -n 1)"
+          chmod +x "$redot_bin"
+          "$redot_bin" --version
+          test "$("$redot_bin" --version)" = "26.3.stable.official.85e520394"
+          python tests/run_fixture.py \
+            --redot "$redot_bin" \
+            --provider addons/godot-git-plugin/macos/libgit_plugin.macos.editor.universal.dylib
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: redot-git-macos-universal-${{ github.sha }}
           if-no-files-found: error
@@ -215,35 +264,36 @@ jobs:
           if-no-files-found: error
           path: reports/binary-audits/macos-universal.json
 
+
   package:
     name: Deterministic release archive
     needs: [api-contract, linux-x86_64, windows-x86_64, macos-universal]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: redot-git-linux-x86_64-${{ github.sha }}
           path: staging/addons/godot-git-plugin/linux
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          name: redot-git-audit-linux-x86_64-${{ github.sha }}
-          path: staging/binary-audits
-      - uses: actions/download-artifact@v8
-        with:
           name: redot-git-windows-x86_64-${{ github.sha }}
           path: staging/addons/godot-git-plugin/windows
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          name: redot-git-audit-windows-x86_64-${{ github.sha }}
-          path: staging/binary-audits
-      - uses: actions/download-artifact@v8
-        with:
           name: redot-git-macos-universal-${{ github.sha }}
           path: staging/addons/godot-git-plugin/macos
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: redot-git-audit-linux-x86_64-${{ github.sha }}
+          path: staging/binary-audits
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: redot-git-audit-windows-x86_64-${{ github.sha }}
+          path: staging/binary-audits
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: redot-git-audit-macos-universal-${{ github.sha }}
@@ -256,7 +306,7 @@ jobs:
           python scripts/package_release.py --input-root staging/addons/godot-git-plugin --output-dir dist-b --audit-records staging/binary-audits
           diff -rq dist-a dist-b
           mv dist-a dist
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: redot-git-plugin-release-${{ github.sha }}
           if-no-files-found: error
