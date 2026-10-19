@@ -16,7 +16,13 @@ TEST_MARKERS = (
 # protocol endpoints and runtime configuration names with build locations.
 PATH_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])(?P<drive>[A-Za-z]:[/\\]+[A-Za-z0-9_.-][^\x00-\x20\"<>|]*)"
-    r"|(?<![A-Za-z0-9_./\\:@])(?P<unc>\\{2,}[A-Za-z0-9_-][A-Za-z0-9_.-]*\\+[^\x00-\x20\"<>|]+)"
+    # A UNC root is exactly two backslashes (four when escaped), a server name
+    # of at least two characters and a share. Looser forms match byte runs in
+    # compiled lookup tables.
+    r"|(?<![A-Za-z0-9_./\\:@])(?P<unc>"
+    r"(?:\\\\(?!\\)[A-Za-z0-9][A-Za-z0-9_.-]{1,62}\\(?!\\)"
+    r"|\\\\\\\\(?!\\)[A-Za-z0-9][A-Za-z0-9_.-]{1,62}\\\\(?!\\))"
+    r"[A-Za-z0-9_$][^\x00-\x20\"<>|]*)"
     r"|(?<![A-Za-z0-9_./\\:@])(?P<posix>/"
     r"(?:home|Users|root|build|builds|workspace|workspaces|tmp|private|var/tmp|mnt|Volumes|opt)/"
     r"[^\x00-\x20\"<>|]+)"

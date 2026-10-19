@@ -161,6 +161,18 @@ class ScannerTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertTrue(binary_scan.scan_bytes(value.encode("ascii")))
 
+    def test_backslash_runs_in_compiled_tables_are_not_unc_paths(self) -> None:
+        backslash = b"\\"
+        samples = (
+            b"\x88Pu(" + backslash * 2 + b"m" + backslash * 2 + b"\xda1\xb8\x86",
+            b"\x86" + backslash * 2 + b"mm" + backslash * 2 + b"\xda1\xb8",
+            b"L" + backslash * 3 + b"XXX0" + backslash * 4 + b"XXXXPPTPPT  \x1c",
+            b"(" + backslash * 3 + b"server" + backslash + b"share\x00",
+        )
+        for data in samples:
+            with self.subTest(data=data):
+                self.assertEqual([], binary_scan.scan_bytes(data))
+
     def test_escaped_paths_in_text(self) -> None:
         for value in synthetic_paths():
             encoded = json.dumps({"path": value}).encode("ascii")
