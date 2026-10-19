@@ -43,6 +43,8 @@ func _run() -> void:
 			result = _run_edge_matrix()
 		"detached":
 			result = _run_detached()
+		"case_unstage_old_first", "case_unstage_new_first":
+			result = _run_index_regression(scenario)
 		"literal_stage", "literal_unstage", "literal_discard", "external_stage", "external_unstage", "external_commit", "rename_commit", "staged_path", "branch_collision", "merge_external", "merge_aborted", "merge_resumed", "merge_octopus", "pending_pull", "legacy_encoding", "unborn_line":
 			result = _run_local_regression(scenario)
 		_:
@@ -442,6 +444,35 @@ func _large_diff_complete(files: Array) -> bool:
 					added += 1
 					last = last or line.get("new_line_no") == 20000
 	return added >= 10000 and last
+
+
+func _run_index_regression(scenario: String) -> Dictionary:
+	var provider := _new_provider()
+	if provider == null:
+		return {"scenario": scenario, "passed": false}
+	var result: Dictionary = {"scenario": scenario}
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	if not result.initialize:
+		result["passed"] = false
+		return result
+	var status: Array = provider.call("test_get_modified_files_data")
+	var ok := true
+	match scenario:
+		"case_unstage_old_first", "case_unstage_new_first":
+			var paths: Array[String] = []
+			for row: Dictionary in status:
+				if row.get("area") == TREE_AREA_STAGED:
+					paths.append(row.file_path)
+			paths.sort()
+			ok = paths == ["Name.txt", "name.txt"]
+			if scenario == "case_unstage_new_first":
+				paths.reverse()
+			for path: String in paths:
+				provider.call("test_unstage_file", path)
+			result["unstage_order"] = paths
+	result["index_entries"] = _git(["ls-files", "--stage"]).text
+	result["passed"] = ok
+	return result
 
 
 func _run_local_regression(scenario: String) -> Dictionary:

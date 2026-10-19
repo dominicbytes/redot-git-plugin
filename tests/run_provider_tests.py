@@ -245,6 +245,44 @@ def prepare_local_regression(project: Path, temp_root: Path, git: str, scenario:
         (project / "legacy.txt").write_bytes(b"caf\xe9\n\xff changed\n")
 
 
+def prepare_index_regression(project: Path, git: str, scenario: str) -> None:
+    initialize_repository(project, git)
+    checked([git, "config", "core.ignorecase", "true"], project)
+    files = {"Name.txt": "original blob\n"}
+    for name, content in files.items():
+        path = project / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8", newline="\n")
+    checked([git, "add", *files], project)
+    if scenario.startswith("case_unstage_"):
+        checked([git, "update-index", "--chmod=+x", "Name.txt"], project)
+    checked([git, "commit", "-m", "Index regression baseline"], project)
+    if scenario.startswith("case_unstage_"):
+        checked([git, "mv", "Name.txt", "intermediate.txt"], project)
+        checked([git, "mv", "intermediate.txt", "name.txt"], project)
+
+
+def execute_index_regressions(execute: Callable[[str, Prepare], tuple[Path, Path, dict[str, object]]], git: str) -> None:
+    scenarios = (
+        "case_unstage_old_first", "case_unstage_new_first",
+    )
+    for scenario in scenarios:
+        _root, project, report = execute(
+            scenario, lambda project, _temp_root, case=scenario: prepare_index_regression(project, git, case)
+        )
+        expected = ""
+        tree_command = [git, "ls-tree", "-r", "--format=%(objectmode) %(objectname) 0%x09%(path)", "HEAD"]
+        if scenario.startswith("case_unstage_"):
+            expected = command_output(tree_command, project)
+        actual = command_output([git, "ls-files", "--stage"], project)
+        verification = {"expected_entries": expected, "index_entries": actual}
+        if scenario.startswith("case_unstage_"):
+            verification["ignorecase"] = command_output([git, "config", "core.ignorecase"], project)
+            verification["case_insensitive_worktree"] = (project / "NAME.TXT").exists()
+        report["verification"] = verification
+        report["passed"] = report["passed"] and actual == expected
+
+
 def execute_local_regressions(execute: Callable[[str, Prepare], tuple[Path, Path, dict[str, object]]], git: str) -> None:
     scenarios = (
         "literal_stage", "literal_unstage", "literal_discard",
@@ -327,6 +365,7 @@ def main() -> int:
         return temp_root, project, report
 
     try:
+        execute_index_regressions(execute, arguments.git)
         execute_local_regressions(execute, arguments.git)
         execute("local", lambda project, temp_root: prepare_local(project, temp_root, arguments.git))
 
