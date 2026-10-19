@@ -11,6 +11,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from diagnostics import check_process, engine_identity, run_process, sanitize
+
 from provider_layout import install_provider
 
 
@@ -30,14 +32,10 @@ activate = 1
 def run(
     command: list[str], cwd: Path, timeout: int = 30, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return run_process(
         command,
         cwd=cwd,
         env=env,
-        check=False,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=timeout,
     )
 
@@ -50,13 +48,13 @@ def prepare_repository(project: Path, git: str) -> None:
     ):
         result = run(command, project)
         if result.returncode:
-            raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+            raise RuntimeError(sanitize(result.stderr.strip() or result.stdout.strip()))
 
     (project / "tracked.txt").write_text("baseline\n", encoding="utf-8", newline="\n")
     for command in ([git, "add", "tracked.txt"], [git, "commit", "-m", "Fixture baseline"]):
         result = run(command, project)
         if result.returncode:
-            raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+            raise RuntimeError(sanitize(result.stderr.strip() or result.stdout.strip()))
     (project / "untracked.txt").write_text("provider should report this\n", encoding="utf-8", newline="\n")
 
 
@@ -100,26 +98,16 @@ def main() -> int:
     temp_root = Path(tempfile.mkdtemp(prefix="redot-git-fixture-"))
     project = temp_root / "project"
     try:
+        identity = engine_identity(redot, temp_root)
         shutil.copytree(fixture, project)
         install_provider(root, project, provider)
         prepare_repository(project, arguments.git)
 
-        import_command = [
-            str(redot),
-            "--headless",
-            "--editor",
-            "--path",
-            str(project),
-            "--import",
-            "--quit-after",
-            "120",
-        ]
-        import_process = run(import_command, project, timeout=45)
         enable_provider(project)
 
         command = [
             str(redot),
-            "--headless",
+            "--headless", "--audio-driver", "Dummy",
             "--editor",
             "--path",
             str(project),
@@ -132,33 +120,34 @@ def main() -> int:
         process = run(command, project, timeout=45, env=provider_env)
         combined = process.stdout + process.stderr
         result, failures = validate(combined)
-        if process.returncode:
-            failures.append(f"Redot exited with code {process.returncode}")
-        if import_process.returncode:
-            failures.append(f"Redot import exited with code {import_process.returncode}")
-        for label, output in (("import", import_process.stdout + import_process.stderr), ("smoke", combined)):
-            if "ERROR:" in output or "SCRIPT ERROR:" in output or "WARNING:" in output:
-                failures.append(f"{label} output contained an error or warning")
+        smoke_diagnostics = check_process(process, identity=identity,
+                                            result_passed=not failures, provider_active=True)
+        failures.extend(smoke_diagnostics["failures"])
 
         report = {
+            "redot_version": identity,
+            "diagnostics": smoke_diagnostics,
             "command": command,
-            "import_command": import_command,
-            "import_exit_code": import_process.returncode,
             "provider_sha256": __import__("hashlib").sha256(provider.read_bytes()).hexdigest(),
             "redot_exit_code": process.returncode,
             "result": result,
             "failures": failures,
-            "import_output": import_process.stdout + import_process.stderr,
             "output": combined,
         }
+        report = sanitize(report, {str(redot): "$REDOT_BIN", str(project): "<fixture project>",
+                                   str(temp_root): "<temp dir>", str(provider): "<provider binary>"})
         print(__import__("json").dumps(report, indent=2))
         return 1 if failures else 0
     finally:
         if arguments.keep:
-            print(f"Fixture retained at {temp_root}", file=sys.stderr)
+            print("Fixture retained (--keep)", file=sys.stderr)
         else:
             shutil.rmtree(temp_root, ignore_errors=True)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as error:
+        print(sanitize(str(error)), file=sys.stderr)
+        sys.exit(1)

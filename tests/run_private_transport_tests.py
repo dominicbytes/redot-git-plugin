@@ -7,7 +7,6 @@ import argparse
 import base64
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -16,7 +15,9 @@ import time
 import uuid
 from pathlib import Path
 
-from provider_layout import install_provider
+from diagnostics import check_process, controlled_environment, engine_identity, run_process, sanitize
+
+from provider_layout import install_provider, install_scenario_driver
 
 
 RESULT_PREFIX = "REDOT_GIT_PRIVATE_TEST="
@@ -30,14 +31,10 @@ def run(
     env: dict[str, str] | None = None,
     timeout: int = 90,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return run_process(
         command,
         cwd=cwd,
         env=env,
-        check=False,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=timeout,
     )
 
@@ -51,7 +48,7 @@ def checked(
 ) -> str:
     process = run(command, cwd, env=env, timeout=timeout)
     if process.returncode:
-        raise RuntimeError(process.stderr.strip() or process.stdout.strip())
+        raise RuntimeError(sanitize(process.stderr.strip() or process.stdout.strip()))
     return process.stdout.strip()
 
 
@@ -162,25 +159,16 @@ def prepare_ssh(
     checked([git, *options, "push", "origin", "main"], peer)
 
 
-def import_project(redot: Path, project: Path, env: dict[str, str]) -> None:
-    checked(
-        [str(redot), "--headless", "--editor", "--path", str(project), "--import", "--quit-after", "120"],
-        project,
-        env=env,
-    )
-
-
 def run_provider(redot: Path, project: Path, env: dict[str, str]) -> dict[str, object]:
+    install_scenario_driver(project, "private_transport_scenario.gd")
     command = [
         str(redot),
-        "--headless",
+        "--headless", "--audio-driver", "Dummy",
         "--editor",
         "--path",
         str(project),
-        "--script",
-        "res://private_transport_scenario.gd",
         "--quit-after",
-        "180",
+        "12",
     ]
     process = run(command, project, env=env)
     output = process.stdout + process.stderr
@@ -190,12 +178,17 @@ def run_provider(redot: Path, project: Path, env: dict[str, str]) -> dict[str, o
             result = json.loads(line.removeprefix(RESULT_PREFIX))
             break
     if result is None:
-        raise RuntimeError(f"Redot did not emit the private transport marker.\n{output}")
+        result = {"passed": False}
+    identity = engine_identity(redot, project)
+    diagnostics = check_process(process, identity=identity,
+                                result_passed=result.get("passed") is True, provider_active=True)
     return {
+        "redot_version": identity,
         "exit_code": process.returncode,
         "result": result,
         "output": output,
-        "passed": process.returncode == 0 and result.get("passed") is True,
+        "diagnostics": diagnostics,
+        "passed": diagnostics["passed"],
     }
 
 
@@ -204,8 +197,8 @@ def scan_for_sentinels(project: Path, output: str, sentinels: tuple[str, ...]) -
     for path in project.rglob("*"):
         if path.is_file():
             data = path.read_bytes()
-            matches.extend(f"{path}:{sentinel}" for sentinel in sentinels if sentinel.encode() in data)
-    matches.extend(f"output:{sentinel}" for sentinel in sentinels if sentinel in output)
+            matches.extend(f"{path.relative_to(project).as_posix()}:sentinel" for sentinel in sentinels if sentinel.encode() in data)
+    matches.extend("output:sentinel" for sentinel in sentinels if sentinel in output)
     return matches
 
 
@@ -218,6 +211,8 @@ def main() -> int:
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
+    arguments.redot = arguments.redot.resolve()
+    arguments.provider = arguments.provider.resolve()
 
     root = Path(__file__).resolve().parents[1]
     temp_root = Path(tempfile.mkdtemp(prefix="redot-git-private-"))
@@ -232,7 +227,7 @@ def main() -> int:
     generate_keys(fixtures, find_ssh_tool("ssh-keygen"), ssh_passphrase)
 
     reports: list[dict[str, object]] = []
-    base_env = os.environ.copy()
+    base_env = controlled_environment()
     profile = temp_root / "profile"
     (profile / ".ssh").mkdir(parents=True)
     base_env["HOME"] = str(profile)
@@ -290,7 +285,6 @@ def main() -> int:
             "REDOT_GIT_PRIVATE_KEY": "",
             "REDOT_GIT_PASSPHRASE": "",
         }
-        import_project(arguments.redot, https_project, https_env)
         https_report = run_provider(arguments.redot, https_project, https_env)
         https_options = [
             "-c",
@@ -330,7 +324,6 @@ def main() -> int:
             "REDOT_GIT_PRIVATE_KEY": str(fixtures / "client"),
             "REDOT_GIT_PASSPHRASE": ssh_passphrase,
         }
-        import_project(arguments.redot, ssh_project, ssh_env)
         ssh_report = run_provider(arguments.redot, ssh_project, ssh_env)
         checked([arguments.git, "-c", f"core.sshCommand={setup_ssh_command}", "fetch", "origin"], ssh_peer)
         pushed_ssh = checked([arguments.git, "show", "origin/main:provider-ssh.txt"], ssh_peer)
@@ -348,7 +341,7 @@ def main() -> int:
     finally:
         run(["docker", "rm", "--force", container], root)
         if arguments.keep:
-            print(f"Fixture retained at {temp_root}", file=sys.stderr)
+            print("Fixture retained (--keep)", file=sys.stderr)
         else:
             shutil.rmtree(temp_root, ignore_errors=True)
 
@@ -357,6 +350,9 @@ def main() -> int:
         "reports": reports,
         "passed": len(reports) == 2 and all(report["passed"] for report in reports),
     }
+    summary = sanitize(summary, {str(arguments.redot): "$REDOT_BIN", str(arguments.provider): "<provider binary>",
+                                 str(temp_root): "<temp dir>", str(root): "<repo clone>"})
+    reports = summary["reports"]
     serialized = json.dumps(summary, indent=2, ensure_ascii=False)
     if arguments.output:
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
@@ -368,6 +364,7 @@ def main() -> int:
             {
                 "transport": report["result"].get("transport"),
                 "passed": report["passed"],
+                "outcome": report["diagnostics"]["outcome"],
                 "verification": report.get("verification"),
             }
             for report in reports
@@ -378,4 +375,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as error:
+        print(sanitize(str(error)), file=sys.stderr)
+        sys.exit(1)
