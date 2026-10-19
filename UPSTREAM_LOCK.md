@@ -56,8 +56,7 @@ libgit2 1.9.7 fixes SSH repository-path command injection
 ([CVE-2026-5917](https://github.com/libgit2/libgit2/blob/49e408b3208bc3093757a1c2db938d3590f3f412/docs/changelog.md)).
 
 OpenSSL 3.6.5 includes the [2026-09-29 security advisory](https://github.com/openssl/openssl/blob/c8bd5a57108599ac650bbae77fcabe3109dab2e8/CHANGES.md)
-fixes, including CVE-2026-35189 (CRLDP memory allocation) and
-CVE-2026-84783 (X.509 extension-cache use-after-free).
+fixes, including CVE-2026-35189 (CRLDP memory allocation).
 
 libssh2 is pinned to an untagged master commit because no tagged release
 contains the [ETM decrypt heap-overflow fix](https://github.com/libssh2/libssh2/commit/42e33d81577ed4b95d4b4f6f845e5ee8efe5eeb4)
