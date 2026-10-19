@@ -109,8 +109,15 @@ def classify(output: str, exit_code: int, *, identity: str, result_passed: bool,
     if exit_code != 0 and not (known_crash or known_import_crash):
         failures.append(f"engine exited with code {exit_code}")
     allowed_context = False
-    for raw_line in output.splitlines():
+    offset = 0
+    for raw_line in output.splitlines(keepends=True):
+        line_start = offset
+        offset += len(raw_line)
         line = raw_line.strip()
+        # Ordinary output printed while the provider was active belongs to the
+        # scenario, whose own assertions already passed. After a banner-less
+        # crash only the output following the shutdown marker must be known.
+        check_output = strict_lines and not (bannerless_crash and line_start < marker)
         if CRASH_BANNER.search(line):
             if not (known_crash or known_import_crash):
                 failures.append("unexpected crash banner")
@@ -130,7 +137,7 @@ def classify(output: str, exit_code: int, *, identity: str, result_passed: bool,
             if not allowed_context:
                 failures.append("unexpected diagnostic: " + line)
         elif line:
-            if strict_lines:
+            if check_output:
                 if allowed_context and (
                     line == "GDScript backtrace (most recent call first):"
                     or re.fullmatch(r"\[\d+\] \w+ \(res[:]//(?:provider_scenario\.gd|addons/fixture-driver/driver\.gd)[:]\d+\)", line)

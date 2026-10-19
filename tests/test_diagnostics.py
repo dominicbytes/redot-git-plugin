@@ -107,6 +107,17 @@ class DiagnosticsTests(unittest.TestCase):
                 text = "GitPlugin: Shut down\n" + line
                 self.assertFalse(self.classify(text, 0xC0000005, providers_freed=True)["passed"])
 
+    def test_bannerless_shutdown_crash_accepts_scenario_output_before_marker(self):
+        scenario_output = "remote: CR_ONE\nremote: CR_TICK " + "x" * 64 + "\n"
+        result_marker = 'REDOT_GIT_PROVIDER_TEST={"passed":true,"providers_freed":true}'
+        text = scenario_output + "GitPlugin: Shut down\n" + result_marker
+        self.assertEqual(self.classify(text, 0xC0000005, providers_freed=True)["outcome"],
+                         "known_engine_shutdown_crash")
+        after_marker = "GitPlugin: Shut down\n" + scenario_output + result_marker
+        self.assertFalse(self.classify(after_marker, 0xC0000005, providers_freed=True)["passed"])
+        unknown_diagnostic = "ERROR: provider failed\nGitPlugin: Shut down\n" + result_marker
+        self.assertFalse(self.classify(unknown_diagnostic, 0xC0000005, providers_freed=True)["passed"])
+
     def test_new_exceptions_reject_unknown_leak_context(self):
         leak = "WARNING: ObjectDB instances leaked at exit (run with --verbose for details)."
         for context in ("at: check_errors (src/git_plugin.cpp:1)", "at: unexpected (core/unknown.cpp:1)"):
