@@ -43,6 +43,28 @@ class RedirectPatchTests(unittest.TestCase):
         prepare_source(self.source, self.target, self.patch)
         self.assertEqual(expected, net.read_bytes())
 
+    def test_refresh_removes_deleted_upstream_file(self) -> None:
+        obsolete = self.source / "src/libgit2/obsolete.c"
+        obsolete.parent.mkdir()
+        obsolete.write_text("int obsolete(void) { return 1; }\n")
+        prepare_source(self.source, self.target, self.patch)
+        obsolete.unlink()
+        (self.source / "src/util/net.c").write_bytes(self.original + b"\n")
+        prepare_source(self.source, self.target, self.patch)
+        self.assertFalse((self.target / "src/libgit2/obsolete.c").exists())
+
+    def test_refresh_removes_renamed_upstream_file(self) -> None:
+        old = self.source / "src/libgit2/old.c"
+        old.parent.mkdir()
+        old.write_text("int renamed(void) { return 1; }\n")
+        prepare_source(self.source, self.target, self.patch)
+        old.rename(old.with_name("new.c"))
+        (self.source / "src/util/net.c").write_bytes(self.original + b"\n")
+        prepare_source(self.source, self.target, self.patch)
+        self.assertFalse((self.target / "src/libgit2/old.c").exists())
+        self.assertEqual((self.source / "src/libgit2/new.c").read_bytes(),
+                         (self.target / "src/libgit2/new.c").read_bytes())
+
     def test_upstream_drift_refuses_build(self) -> None:
         net = self.source / "src/util/net.c"
         net.write_bytes(self.original.replace(b"!allow_offsite &&", b"allow_offsite &&"))

@@ -21,8 +21,11 @@ def prepare_source(source: Path, target: Path, patch: Path) -> Path:
         recorded = stamp.read_text().splitlines()
         if recorded == [signature, hashlib.sha256(patched.read_bytes()).hexdigest()]:
             return target
+    # Recreate invalidated copies so removed or renamed upstream files vanish.
+    if target.exists():
+        shutil.rmtree(target)
     # Copy upstream timestamps so unrelated C objects need not rebuild.
-    shutil.copytree(source, target, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".git"))
+    shutil.copytree(source, target, ignore=shutil.ignore_patterns(".git"))
     environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
     # git apply also works outside repositories. Stop discovery at the build
     # copy's parent so patches cannot affect the enclosing source checkout.
