@@ -249,6 +249,8 @@ def prepare_index_regression(project: Path, git: str, scenario: str) -> None:
     initialize_repository(project, git)
     checked([git, "config", "core.ignorecase", "true"], project)
     files = {"Name.txt": "original blob\n"}
+    if scenario.startswith("missing_index_"):
+        files = {"selected.txt": "selected baseline\n", "external.txt": "external baseline\n"}
     for name, content in files.items():
         path = project / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -260,11 +262,14 @@ def prepare_index_regression(project: Path, git: str, scenario: str) -> None:
     if scenario.startswith("case_unstage_"):
         checked([git, "mv", "Name.txt", "intermediate.txt"], project)
         checked([git, "mv", "intermediate.txt", "name.txt"], project)
+    elif scenario.startswith("missing_index_"):
+        (project / "selected.txt").write_text("selected changed\n", encoding="utf-8", newline="\n")
 
 
 def execute_index_regressions(execute: Callable[[str, Prepare], tuple[Path, Path, dict[str, object]]], git: str) -> None:
     scenarios = (
         "case_unstage_old_first", "case_unstage_new_first",
+        "missing_index_stage", "missing_index_unstage", "missing_index_commit",
     )
     for scenario in scenarios:
         _root, project, report = execute(
@@ -274,11 +279,19 @@ def execute_index_regressions(execute: Callable[[str, Prepare], tuple[Path, Path
         tree_command = [git, "ls-tree", "-r", "--format=%(objectmode) %(objectname) 0%x09%(path)", "HEAD"]
         if scenario.startswith("case_unstage_"):
             expected = command_output(tree_command, project)
+        elif scenario == "missing_index_stage":
+            blob = command_output([git, "hash-object", "selected.txt"], project)
+            expected = f"100644 {blob} 0\tselected.txt"
+        elif scenario == "missing_index_unstage":
+            expected = command_output([*tree_command, "--", "selected.txt"], project)
         actual = command_output([git, "ls-files", "--stage"], project)
         verification = {"expected_entries": expected, "index_entries": actual}
         if scenario.startswith("case_unstage_"):
             verification["ignorecase"] = command_output([git, "config", "core.ignorecase"], project)
             verification["case_insensitive_worktree"] = (project / "NAME.TXT").exists()
+        if scenario == "missing_index_commit":
+            verification["head_entries"] = command_output(tree_command, project)
+            report["passed"] = report["passed"] and verification["head_entries"] == ""
         report["verification"] = verification
         report["passed"] = report["passed"] and actual == expected
 

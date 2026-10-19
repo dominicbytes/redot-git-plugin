@@ -195,7 +195,7 @@ static bool index_has_exact_path(git_index *index, const char *path) {
 void GitPlugin::_commit(const godot::String &msg) {
 	git_index_ptr repo_index;
 	GIT2_CALL(git_repository_index(Capture(repo_index), repo.get()), "Could not get repository index");
-	GIT2_CALL(git_index_read(repo_index.get(), 0), "Could not reload repository index");
+	GIT2_CALL(git_index_read(repo_index.get(), 1), "Could not reload repository index");
 
 	git_oid tree_id;
 	GIT2_CALL(git_index_write_tree(&tree_id, repo_index.get()), "Could not write index to tree");
@@ -246,7 +246,7 @@ void GitPlugin::_stage_file(const godot::String &file_path) {
 	CString c_path(file_path);
 	git_index_ptr index;
 	GIT2_CALL(git_repository_index(Capture(index), repo.get()), "Could not get repository index");
-	GIT2_CALL(git_index_read(index.get(), 0), "Could not reload repository index");
+	GIT2_CALL(git_index_read(index.get(), 1), "Could not reload repository index");
 	const int add_error = git_index_add_bypath(index.get(), c_path.data);
 	if (add_error == GIT_ENOTFOUND) {
 		GIT2_CALL(git_index_remove_bypath(index.get(), c_path.data), "Could not remove " + file_path + " from index");
@@ -260,7 +260,7 @@ void GitPlugin::_unstage_file(const godot::String &file_path) {
 	CString c_path(file_path);
 	git_index_ptr index;
 	GIT2_CALL(git_repository_index(Capture(index), repo.get()), "Could not get repository index");
-	GIT2_CALL(git_index_read(index.get(), 0), "Could not reload repository index");
+	GIT2_CALL(git_index_read(index.get(), 1), "Could not reload repository index");
 
 	git_reference_ptr head;
 	GIT2_CALL_IGNORE(git_repository_head(Capture(head), repo.get()), "Could not find repository HEAD", { GIT_ENOTFOUND COMMA GIT_EUNBORNBRANCH });

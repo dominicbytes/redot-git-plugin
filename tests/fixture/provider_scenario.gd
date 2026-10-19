@@ -43,7 +43,7 @@ func _run() -> void:
 			result = _run_edge_matrix()
 		"detached":
 			result = _run_detached()
-		"case_unstage_old_first", "case_unstage_new_first":
+		"case_unstage_old_first", "case_unstage_new_first", "missing_index_stage", "missing_index_unstage", "missing_index_commit":
 			result = _run_index_regression(scenario)
 		"literal_stage", "literal_unstage", "literal_discard", "external_stage", "external_unstage", "external_commit", "rename_commit", "staged_path", "branch_collision", "merge_external", "merge_aborted", "merge_resumed", "merge_octopus", "pending_pull", "legacy_encoding", "unborn_line":
 			result = _run_local_regression(scenario)
@@ -470,6 +470,15 @@ func _run_index_regression(scenario: String) -> Dictionary:
 			for path: String in paths:
 				provider.call("test_unstage_file", path)
 			result["unstage_order"] = paths
+		"missing_index_stage", "missing_index_unstage", "missing_index_commit":
+			ok = DirAccess.remove_absolute(ProjectSettings.globalize_path("res://.git/index")) == OK
+			result["index_deleted"] = ok
+			if scenario == "missing_index_stage":
+				provider.call("test_stage_file", "selected.txt")
+			elif scenario == "missing_index_unstage":
+				provider.call("test_unstage_file", "selected.txt")
+			else:
+				provider.call("test_commit", "Commit externally cleared index")
 	result["index_entries"] = _git(["ls-files", "--stage"]).text
 	result["passed"] = ok
 	return result
