@@ -48,9 +48,12 @@ The exact API evidence is stored under
 | Dependency | Version in source | Commit | License summary |
 | --- | --- | --- | --- |
 | redot-cpp | Redot 26.2 branch | `598ec78e86b2c240a023f6de13daba70f7de8610` | MIT |
-| libgit2 | 1.9.6 | `26055f5af74ab1cf636d272e8a34315496d3f06f` | GPL-2.0-only with linking exception and bundled notices |
+| libgit2 | 1.9.7 | `49e408b3208bc3093757a1c2db938d3590f3f412` | GPL-2.0-only with linking exception and bundled notices |
 | libssh2 | 1.11.0 | `1c3f1b7da588f2652260285529ec3c1f1125eb4e` | BSD-3-Clause |
 | OpenSSL | 3.6.3 | `aae016bfd52fcad2bc9657c2c782cfdf73b1ed5f` | Apache-2.0 for current source, plus bundled legacy notices |
+
+libgit2 1.9.7 fixes SSH repository-path command injection
+([CVE-2026-5917](https://github.com/libgit2/libgit2/blob/49e408b3208bc3093757a1c2db938d3590f3f412/docs/changelog.md)).
 
 The prior `THIRDPARTY.md` libssh2 URL named a different commit than the
 gitlink. The notice now names the actual locked gitlink above.

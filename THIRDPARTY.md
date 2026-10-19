@@ -3,7 +3,7 @@
 The Redot Git Plugin source code uses the following third-party source code:
 
 1. Redot-Engine/redot-cpp - MIT License - https://github.com/Redot-Engine/redot-cpp/tree/598ec78e86b2c240a023f6de13daba70f7de8610
-2. libgit2/libgit2 - GPLv2 with a special Linking Exception - https://github.com/libgit2/libgit2/tree/26055f5af74ab1cf636d272e8a34315496d3f06f
+2. libgit2/libgit2 1.9.7 - GPLv2 with a special Linking Exception - https://github.com/libgit2/libgit2/tree/49e408b3208bc3093757a1c2db938d3590f3f412
 3. libssh2/libssh2 - BSD-3-Clause License - https://github.com/libssh2/libssh2/tree/1c3f1b7da588f2652260285529ec3c1f1125eb4e
 4. OpenSSL 3.6.3 - Apache License 2.0 - https://github.com/openssl/openssl/tree/aae016bfd52fcad2bc9657c2c782cfdf73b1ed5f
 
