@@ -253,6 +253,10 @@ def prepare_index_regression(project: Path, git: str, scenario: str) -> None:
         files = {"selected.txt": "selected baseline\n", "external.txt": "external baseline\n"}
     elif scenario == "directory_to_file_unstage":
         files = {"node/child.txt": "original child\n"}
+    elif scenario == "file_to_directory_stage":
+        files = {"node": "original file\n"}
+    elif scenario == "gitlink_stage":
+        files = {"anchor.txt": "anchor\n"}
     for name, content in files.items():
         path = project / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -271,13 +275,29 @@ def prepare_index_regression(project: Path, git: str, scenario: str) -> None:
         (project / "node").rmdir()
         (project / "node").write_text("replacement file\n", encoding="utf-8", newline="\n")
         checked([git, "add", "--all", "--", "node"], project)
+    elif scenario == "file_to_directory_stage":
+        (project / "node").unlink()
+        (project / "node").mkdir()
+        (project / "node" / "child.txt").write_text("untracked child\n", encoding="utf-8", newline="\n")
+    elif scenario == "gitlink_stage":
+        submodule = project / "node"
+        submodule.mkdir()
+        initialize_repository(submodule, git)
+        (submodule / "child.txt").write_text("first\n", encoding="utf-8", newline="\n")
+        checked([git, "add", "child.txt"], submodule)
+        checked([git, "commit", "-m", "Gitlink baseline"], submodule)
+        checked([git, "add", "node"], project)
+        checked([git, "commit", "-m", "Track gitlink"], project)
+        (submodule / "child.txt").write_text("second\n", encoding="utf-8", newline="\n")
+        checked([git, "add", "child.txt"], submodule)
+        checked([git, "commit", "-m", "Advance gitlink"], submodule)
 
 
 def execute_index_regressions(execute: Callable[[str, Prepare], tuple[Path, Path, dict[str, object]]], git: str) -> None:
     scenarios = (
         "case_unstage_old_first", "case_unstage_new_first",
         "missing_index_stage", "missing_index_unstage", "missing_index_commit",
-        "directory_to_file_unstage",
+        "directory_to_file_unstage", "file_to_directory_stage", "gitlink_stage",
     )
     for scenario in scenarios:
         _root, project, report = execute(
@@ -292,6 +312,10 @@ def execute_index_regressions(execute: Callable[[str, Prepare], tuple[Path, Path
             expected = f"100644 {blob} 0\tselected.txt"
         elif scenario == "missing_index_unstage":
             expected = command_output([*tree_command, "--", "selected.txt"], project)
+        elif scenario == "gitlink_stage":
+            anchor = command_output([*tree_command, "--", "anchor.txt"], project)
+            oid = command_output([git, "rev-parse", "HEAD"], project / "node")
+            expected = f"{anchor}\n160000 {oid} 0\tnode"
         actual = command_output([git, "ls-files", "--stage"], project)
         verification = {"expected_entries": expected, "index_entries": actual}
         if scenario.startswith("case_unstage_"):

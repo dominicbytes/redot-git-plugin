@@ -248,8 +248,12 @@ void GitPlugin::_stage_file(const godot::String &file_path) {
 	GIT2_CALL(git_repository_index(Capture(index), repo.get()), "Could not get repository index");
 	GIT2_CALL(git_index_read(index.get(), 1), "Could not reload repository index");
 	const int add_error = git_index_add_bypath(index.get(), c_path.data);
-	if (add_error == GIT_ENOTFOUND) {
-		GIT2_CALL(git_index_remove_bypath(index.get(), c_path.data), "Could not remove " + file_path + " from index");
+	const git_index_entry *entry = add_error == GIT_EDIRECTORY ? git_index_get_bypath(index.get(), c_path.data, GIT_INDEX_STAGE_NORMAL) : nullptr;
+	const bool replaced_file = add_error == GIT_EDIRECTORY && entry && std::strcmp(entry->path, c_path.data) == 0 && entry->mode != GIT_FILEMODE_COMMIT;
+	if (add_error == GIT_ENOTFOUND || replaced_file) {
+		if (index_has_exact_path(index.get(), c_path.data)) {
+			GIT2_CALL(git_index_remove_bypath(index.get(), c_path.data), "Could not remove " + file_path + " from index");
+		}
 	} else {
 		GIT2_CALL(add_error, "Could not add " + file_path + " to index");
 	}

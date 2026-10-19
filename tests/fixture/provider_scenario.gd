@@ -43,7 +43,7 @@ func _run() -> void:
 			result = _run_edge_matrix()
 		"detached":
 			result = _run_detached()
-		"case_unstage_old_first", "case_unstage_new_first", "missing_index_stage", "missing_index_unstage", "missing_index_commit", "directory_to_file_unstage":
+		"case_unstage_old_first", "case_unstage_new_first", "missing_index_stage", "missing_index_unstage", "missing_index_commit", "directory_to_file_unstage", "file_to_directory_stage", "gitlink_stage":
 			result = _run_index_regression(scenario)
 		"literal_stage", "literal_unstage", "literal_discard", "external_stage", "external_unstage", "external_commit", "rename_commit", "staged_path", "branch_collision", "merge_external", "merge_aborted", "merge_resumed", "merge_octopus", "pending_pull", "legacy_encoding", "unborn_line":
 			result = _run_local_regression(scenario)
@@ -485,6 +485,12 @@ func _run_index_regression(scenario: String) -> Dictionary:
 			result["intermediate_entries"] = _git(["ls-files", "--stage"]).text
 			ok = ok and result.intermediate_entries.is_empty()
 			provider.call("test_unstage_file", "node/child.txt")
+		"file_to_directory_stage":
+			ok = _has_status(status, "node", TREE_AREA_UNSTAGED)
+			provider.call("test_stage_file", "node")
+			ok = ok and FileAccess.get_file_as_string("res://node/child.txt") == "untracked child\n"
+		"gitlink_stage":
+			provider.call("test_stage_file", "node")
 	result["index_entries"] = _git(["ls-files", "--stage"]).text
 	result["passed"] = ok
 	return result
