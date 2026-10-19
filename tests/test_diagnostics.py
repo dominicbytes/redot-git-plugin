@@ -323,6 +323,7 @@ class DiagnosticsTests(unittest.TestCase):
         lines = (
             "ERROR: GitPlugin: Push rejected: refs/heads/main hook declined https://[redacted]@example.invalid/repo?token=[redacted] [redacted] [redacted] [redacted]",
             "ERROR: GitPlugin: Push rejected: refs/heads/main failed to lock file '<fixture>/refs/heads/main.lock' for writing: File exists",
+            "ERROR: GitPlugin: Push rejected: refs/heads/main failed to lock file '<fixture>/refs/heads/main.lock' for writing:",
             "ERROR: GitPlugin: Failed to push. Error -7: remote rejected a reference update in git_plugin.cpp:GitPlugin::_push#L1",
             "ERROR: GitPlugin: Could not lookup remote \"[redacted]\". Error -3: remote '[redacted]' does not exist in git_plugin.cpp:GitPlugin::_fetch#L1",
         )

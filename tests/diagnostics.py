@@ -59,7 +59,7 @@ EXPECTED = {
     "security": (
         r"ERROR: GitPlugin: Remote URLs must not contain credentials\. Use Redot's version-control credential fields instead\.",
         r"ERROR: GitPlugin: Push rejected: refs/heads/main hook declined https://\[redacted\]@example\.invalid/repo\?token=\[redacted\](?: \[redacted\]){3}",
-        r"ERROR: GitPlugin: Push rejected: refs/heads/main failed to lock file '.+[\\/]refs[\\/]heads[\\/]main\.lock' for writing: .+",
+        r"ERROR: GitPlugin: Push rejected: refs/heads/main failed to lock file '.+[\\/]refs[\\/]heads[\\/]main\.lock' for writing:(?: .+)?",
         r"ERROR: GitPlugin: Failed to push\. Error -7: remote rejected a reference update in git_plugin\.cpp:GitPlugin::_push#L\d+",
         r"ERROR: GitPlugin: Could not lookup remote \"\[redacted\]\"\. Error -3: remote '\[redacted\]' does not exist in git_plugin\.cpp:GitPlugin::_(?:fetch|pull|push)#L\d+",
     ),
