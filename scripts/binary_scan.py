@@ -22,6 +22,14 @@ PATH_PATTERN = re.compile(
     r"[^\x00-\x20\"<>|]+)"
 )
 PRINTABLE = re.compile(r"[ -~]{4,}")
+# tools/openssl.py configures OpenSSL with this fixed, machine-neutral install
+# prefix so OPENSSLDIR, ENGINESDIR and MODULESDIR never embed a build root.
+NEUTRAL_PREFIXES = ("c:/redot-git-plugin/",)
+
+
+def _is_neutral(path: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+    return normalized.startswith(NEUTRAL_PREFIXES) and ".." not in normalized
 
 
 @dataclass(frozen=True)
@@ -52,6 +60,8 @@ def scan_bytes(data: bytes) -> list[Finding]:
     for value, encoding, alignment, width in views:
         for run in PRINTABLE.finditer(value):
             for match in PATH_PATTERN.finditer(run.group()):
+                if _is_neutral(match.group()):
+                    continue
                 findings.add(Finding(
                     alignment + width * (run.start() + match.start()),
                     f"absolute-{match.lastgroup}-path",

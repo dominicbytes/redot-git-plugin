@@ -140,6 +140,27 @@ class ScannerTests(unittest.TestCase):
                 with self.subTest(value=value, encoding=encoding):
                     self.assertEqual([], binary_scan.scan_bytes(value.encode(encoding)))
 
+    def test_neutral_openssl_install_prefix_is_allowed(self) -> None:
+        backslash = chr(92)
+        drive = "C" + chr(58)
+        allowed = (
+            backslash.join((drive, "redot-git-plugin", "ssl")),
+            backslash.join((drive, "redot-git-plugin", "openssl", "lib", "ossl-modules")),
+            drive + "/redot-git-plugin/openssl/lib/engines-3",
+        )
+        for value in allowed:
+            for encoding in ("ascii", "utf-16-le"):
+                with self.subTest(value=value, encoding=encoding):
+                    self.assertEqual([], binary_scan.scan_bytes(value.encode(encoding)))
+        rejected = (
+            backslash.join((drive, "redot-git-plugin-build", "source.cpp")),
+            backslash.join((drive, "redot-git-plugin", "..", "sample-build", "source.cpp")),
+            backslash.join(("D" + chr(58), "redot-git-plugin", "ssl")),
+        )
+        for value in rejected:
+            with self.subTest(value=value):
+                self.assertTrue(binary_scan.scan_bytes(value.encode("ascii")))
+
     def test_escaped_paths_in_text(self) -> None:
         for value in synthetic_paths():
             encoded = json.dumps({"path": value}).encode("ascii")
