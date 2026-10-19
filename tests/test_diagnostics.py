@@ -346,6 +346,22 @@ class DiagnosticsTests(unittest.TestCase):
                 self.assertFalse(self.classify(line + "\nGitPlugin: Shut down")["passed"])
                 self.assertFalse(self.classify("ERROR: unrelated transport error\nGitPlugin: Shut down", scenario=scenario)["passed"])
 
+    def test_offline_redirect_refusals_are_scoped(self):
+        prefix = ('ERROR: GitPlugin: Could not connect to remote "redirect-loopback". '
+                  'Are your credentials correct? Try using a PAT token '
+                  '(in case you are using Github) as your password. Error -1: ')
+        suffix = ' in git_plugin.cpp:GitPlugin::_fetch#L1\nGitPlugin: Shut down'
+        cases = (
+            ("security_redirect_cross", "cannot redirect from '127.0.0.1' to '127.0.0.1'"),
+            ("security_redirect_same", "unexpected http status code: 404"),
+        )
+        for scenario, message in cases:
+            output = prefix + message + suffix
+            with self.subTest(scenario=scenario):
+                self.assertTrue(self.classify(output, scenario=scenario)["passed"])
+                self.assertFalse(self.classify(output, scenario="local")["passed"])
+                self.assertFalse(self.classify(prefix + "unexplained" + suffix, scenario=scenario)["passed"])
+
     def test_controlled_environment_discards_host_git_overrides(self):
         with patch.dict(os.environ, {"GIT_DIR": "poison", "GIT_CONFIG_COUNT": "99"}):
             env = controlled_environment()

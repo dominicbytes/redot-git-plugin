@@ -39,7 +39,7 @@ func _run() -> void:
 			result = _run_resolution()
 		"security":
 			result = _run_security()
-		"security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback":
+		"security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback", "security_redirect_cross", "security_redirect_same":
 			result = _run_security_regression(scenario)
 		"edge":
 			result = _run_edge_matrix()
@@ -671,6 +671,11 @@ func _run_security_regression(scenario: String) -> Dictionary:
 	provider.call("test_set_credentials", "fixture", "fixture-password", "", "", "")
 	var passed: bool = result.initialize
 	match scenario:
+		"security_redirect_cross", "security_redirect_same":
+			var config: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://redirect-config.json"))
+			provider.call("test_set_credentials", "fixture", "redirect-password", "", "", "")
+			provider.call("test_create_remote", "redirect-loopback", config.url)
+			provider.call("test_fetch", "redirect-loopback")
 		"security_urls":
 			var allowed: Array[String] = [
 				"ssh://git%40team@example.invalid/repo", "ssh://git@team@example.invalid/repo",

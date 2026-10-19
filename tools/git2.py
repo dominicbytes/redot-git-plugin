@@ -1,4 +1,7 @@
 import os
+from pathlib import Path
+
+from tools.git2_patch import prepare_source
 
 
 def build_library(env, deps):
@@ -39,16 +42,23 @@ def build_library(env, deps):
     lib_prefix = "" if is_msvc else "lib"
     libs = ["{}git2{}".format(lib_prefix, lib_ext)]
 
-    source = env.Dir("#thirdparty/git2/libgit2").abspath
-    target = env.Dir("#bin/thirdparty/libgit2").abspath
+    source = prepare_source(
+        Path(env.Dir("#thirdparty/git2/libgit2").abspath),
+        Path(env.Dir("#bin/thirdparty/libgit2-source").abspath),
+        Path(env.File("#thirdparty/git2/patches/0001-restrict-redirect-origin.patch").abspath),
+    )
 
     git2 = env.CMakeBuild(
-        "#bin/thirdparty/git2/",
-        "#thirdparty/git2/libgit2",
+        "#bin/thirdparty/git2-origin/",
+        str(source),
         cmake_options=config,
         cmake_outputs=libs,
         cmake_targets=[],
-        dependencies=deps,
+        dependencies=deps + [
+            env.File("#thirdparty/git2/patches/0001-restrict-redirect-origin.patch"),
+            env.File("#tools/git2_patch.py"),
+            env.File(str(source / ".redirect-patch")),
+        ],
         languages=["C"],
     )
 

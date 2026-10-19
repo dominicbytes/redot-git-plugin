@@ -64,6 +64,12 @@ EXPECTED = {
         r"ERROR: GitPlugin: Failed to push\. Error -7: remote rejected a reference update in git_plugin\.cpp:GitPlugin::_push#L\d+",
         r"ERROR: GitPlugin: Could not lookup remote \"\[redacted\]\"\. Error -3: remote '\[redacted\]' does not exist in git_plugin\.cpp:GitPlugin::_(?:fetch|pull|push)#L\d+",
     ),
+    "security_redirect_cross": (
+        r"ERROR: GitPlugin: Could not connect to remote \"redirect-loopback\"\. Are your credentials correct\? Try using a PAT token \(in case you are using Github\) as your password\. Error -1: cannot redirect from '127\.0\.0\.1' to '127\.0\.0\.1' in git_plugin\.cpp:GitPlugin::_fetch#L\d+",
+    ),
+    "security_redirect_same": (
+        r"ERROR: GitPlugin: Could not connect to remote \"redirect-loopback\"\. Are your credentials correct\? Try using a PAT token \(in case you are using Github\) as your password\. Error -1: unexpected http status code: 404 in git_plugin\.cpp:GitPlugin::_fetch#L\d+",
+    ),
     "transport_redirect": (
         r"ERROR: GitPlugin: Could not connect to remote \"negative-redirect\"\. Are your credentials correct\? Try using a PAT token \(in case you are using Github\) as your password\. Error -1: cannot redirect from 'localhost' to '127\.0\.0\.1' in git_plugin\.cpp:GitPlugin::_(?:fetch|pull)#L\d+",
         r"ERROR: GitPlugin: Failed to push\. Error -1: cannot redirect from 'localhost' to '127\.0\.0\.1' in git_plugin\.cpp:GitPlugin::_push#L\d+",

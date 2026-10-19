@@ -15,6 +15,7 @@ from pathlib import Path
 from diagnostics import check_process, engine_identity, run_process, sanitize
 from typing import Callable
 
+from redirect_fixture import redirect_fixture
 from provider_layout import install_provider, install_scenario_driver
 
 
@@ -455,6 +456,22 @@ def main() -> int:
 
     try:
         execute_index_regressions(execute, arguments.git)
+        for cross_port in (True, False):
+            with redirect_fixture(cross_port) as (url, events):
+                def prepare_redirect(project: Path, _temp_root: Path) -> None:
+                    initialize_repository(project, arguments.git)
+                    (project / "redirect-config.json").write_text(json.dumps({"url": url}), encoding="utf-8")
+                scenario = "security_redirect_cross" if cross_port else "security_redirect_same"
+                _case_root, _case_project, report = execute(scenario, prepare_redirect)
+                authenticated_source = any(not event["destination"] and event["authorization_valid"] for event in events)
+                destinations = [event for event in events if event["destination"]]
+                report["redirect_verification"] = {
+                    "authenticated_source": authenticated_source,
+                    "destination_requests": len(destinations),
+                    "destination_authorization": any(event["authorization_present"] for event in destinations),
+                }
+                policy_passed = not destinations if cross_port else any(event["authorization_valid"] for event in destinations) and all(not event["authorization_present"] or event["authorization_valid"] for event in destinations)
+                report["passed"] = report["passed"] and authenticated_source and policy_passed
         for scenario in ("security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback"):
             _case_root, _case_project, report = execute(
                 scenario, lambda project, _temp_root: initialize_repository(project, arguments.git)

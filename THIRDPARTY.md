@@ -10,6 +10,13 @@ The Redot Git Plugin source code uses the following third-party source code:
 The complete Apache License 2.0 text shipped by the pinned OpenSSL source is
 included in `LICENSES/OpenSSL-Apache-2.0.txt` and in every release archive.
 
+The bundled libgit2 build includes the downstream redirect-origin security
+patch `thirdparty/git2/patches/0001-restrict-redirect-origin.patch` (2026-10-19).
+It requires unchanged scheme, host and port for redirects with off-site
+redirection disabled. The patch is applied to a build copy; the upstream
+submodule stays unmodified. The existing libgit2 license and linking exception
+apply. This fix should be reported upstream; see ADR-0016 in `DECISIONS.md`.
+
 ## License Texts
 
 ### Redot-Engine/redot-cpp
