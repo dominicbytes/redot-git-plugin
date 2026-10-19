@@ -294,7 +294,9 @@ func _run_edge_matrix() -> Dictionary:
 	result["latest_diff_count"] = provider.call("test_get_diff", latest_id, 0).size()
 	result["modified_diff_count"] = provider.call("test_get_diff", "modified.txt", TREE_AREA_UNSTAGED).size()
 	result["staged_diff_count"] = provider.call("test_get_diff", "staged-new.txt", TREE_AREA_STAGED).size()
-	result["large_diff_count"] = provider.call("test_get_diff", "large.txt", TREE_AREA_UNSTAGED).size()
+	var large_diff: Array = provider.call("test_get_diff", "large.txt", TREE_AREA_UNSTAGED)
+	result["large_diff_count"] = large_diff.size()
+	result["large_diff_complete"] = _large_diff_complete(large_diff)
 	result["binary_diff_count"] = provider.call("test_get_diff", "binary.bin", TREE_AREA_UNSTAGED).size()
 
 	provider.call("test_stage_file", "unicodé file.txt")
@@ -326,6 +328,7 @@ func _run_edge_matrix() -> Dictionary:
 		and result.modified_diff_count > 0
 		and result.staged_diff_count > 0
 		and result.large_diff_count > 0
+		and result.large_diff_complete
 		and result.binary_diff_count > 0
 		and result.history_after.size() == 1
 		and result.history_after[0].get("message", "") == "Provider café\nsecond line"
@@ -427,6 +430,18 @@ func _git(arguments: PackedStringArray) -> Dictionary:
 	command.append_array(arguments)
 	var code := OS.execute("git", command, output, true)
 	return {"code": code, "text": "".join(output).strip_edges()}
+
+
+func _large_diff_complete(files: Array) -> bool:
+	var added := 0
+	var last := false
+	for file: Dictionary in files:
+		for hunk: Dictionary in file.get("diff_hunks", []):
+			for line: Dictionary in hunk.get("diff_lines", []):
+				if line.get("status") == "+":
+					added += 1
+					last = last or line.get("new_line_no") == 20000
+	return added >= 10000 and last
 
 
 func _run_local_regression(scenario: String) -> Dictionary:

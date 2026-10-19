@@ -160,7 +160,7 @@ def prepare_edge_matrix(project: Path, git: str) -> None:
     (project / "staged-new.txt").write_text("staged new\n", encoding="utf-8", newline="\n")
     checked([git, "add", "staged-new.txt"], project)
     (project / "binary.bin").write_bytes(b"\x00\x02changed\x00")
-    (project / "large.txt").write_text("line changed\n" + "line\n" * 19999, encoding="utf-8", newline="\n")
+    (project / "large.txt").write_text("line changed\n" * 20000, encoding="utf-8", newline="\n")
     (project / "unicod\u00e9 file.txt").write_text("unicode path\n", encoding="utf-8", newline="\n")
 
 
