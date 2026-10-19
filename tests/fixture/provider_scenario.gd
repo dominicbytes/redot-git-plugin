@@ -303,7 +303,6 @@ func _run_security() -> Dictionary:
 	provider.call("test_push", private_key, false)
 	result["shutdown"] = provider.call("test_shutdown")
 	result["credentials_empty"] = provider.call("test_credentials_empty")
-	provider.free()
 	result["passed"] = (
 		result.initialize
 		and result.url_policy

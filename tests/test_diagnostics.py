@@ -319,6 +319,32 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertTrue(self.classify(text, scenario="pending_pull")["passed"])
         self.assertFalse(self.classify(text, scenario="local")["passed"])
 
+    def test_security_refusals_are_scoped_and_fail_closed(self):
+        lines = (
+            "ERROR: GitPlugin: Push rejected: refs/heads/main hook declined https://[redacted]@example.invalid/repo?token=[redacted] [redacted] [redacted] [redacted]",
+            "ERROR: GitPlugin: Push rejected: refs/heads/main failed to lock file '<fixture>/refs/heads/main.lock' for writing: File exists",
+            "ERROR: GitPlugin: Failed to push. Error -7: remote rejected a reference update in git_plugin.cpp:GitPlugin::_push#L1",
+            "ERROR: GitPlugin: Could not lookup remote \"[redacted]\". Error -3: remote '[redacted]' does not exist in git_plugin.cpp:GitPlugin::_fetch#L1",
+        )
+        for line in lines:
+            with self.subTest(line=line):
+                self.assertTrue(self.classify(line + "\nGitPlugin: Shut down", scenario="security")["passed"])
+                self.assertFalse(self.classify(line + "\nGitPlugin: Shut down", scenario="local")["passed"])
+        self.assertFalse(self.classify("ERROR: GitPlugin: Push rejected: unexplained\nGitPlugin: Shut down", scenario="security")["passed"])
+
+    def test_private_transport_refusals_are_scoped(self):
+        cases = (
+            ("transport_redirect", "ERROR: GitPlugin: Could not connect to remote \"negative-redirect\". Are your credentials correct? Try using a PAT token (in case you are using Github) as your password. Error -1: cannot redirect from 'localhost' to '127.0.0.1' in git_plugin.cpp:GitPlugin::_fetch#L1"),
+            ("transport_redirect", "ERROR: GitPlugin: Failed to push. Error -1: cannot redirect from 'localhost' to '127.0.0.1' in git_plugin.cpp:GitPlugin::_push#L1"),
+            ("transport_hook_rejection", "ERROR: GitPlugin: Push rejected: refs/heads/main pre-receive hook declined"),
+            ("transport_hook_rejection", "ERROR: GitPlugin: Failed to push. Error -7: remote rejected a reference update in git_plugin.cpp:GitPlugin::_push#L1"),
+        )
+        for scenario, line in cases:
+            with self.subTest(scenario=scenario, line=line):
+                self.assertTrue(self.classify(line + "\nGitPlugin: Shut down", scenario=scenario)["passed"])
+                self.assertFalse(self.classify(line + "\nGitPlugin: Shut down")["passed"])
+                self.assertFalse(self.classify("ERROR: unrelated transport error\nGitPlugin: Shut down", scenario=scenario)["passed"])
+
     def test_controlled_environment_discards_host_git_overrides(self):
         with patch.dict(os.environ, {"GIT_DIR": "poison", "GIT_CONFIG_COUNT": "99"}):
             env = controlled_environment()

@@ -58,7 +58,18 @@ EXPECTED = {
     "conflict": (r"ERROR: GitPlugin: Index has conflicts\. Solve conflicts and make a merge commit\.",),
     "security": (
         r"ERROR: GitPlugin: Remote URLs must not contain credentials\. Use Redot's version-control credential fields instead\.",
-        r'ERROR: GitPlugin: Could not connect to remote "invalid"\. .*Error -1: failed to connect to 127\.0\.0\.1: .*',
+        r"ERROR: GitPlugin: Push rejected: refs/heads/main hook declined https://\[redacted\]@example\.invalid/repo\?token=\[redacted\](?: \[redacted\]){3}",
+        r"ERROR: GitPlugin: Push rejected: refs/heads/main failed to lock file '.+[\\/]refs[\\/]heads[\\/]main\.lock' for writing: .+",
+        r"ERROR: GitPlugin: Failed to push\. Error -7: remote rejected a reference update in git_plugin\.cpp:GitPlugin::_push#L\d+",
+        r"ERROR: GitPlugin: Could not lookup remote \"\[redacted\]\"\. Error -3: remote '\[redacted\]' does not exist in git_plugin\.cpp:GitPlugin::_(?:fetch|pull|push)#L\d+",
+    ),
+    "transport_redirect": (
+        r"ERROR: GitPlugin: Could not connect to remote \"negative-redirect\"\. Are your credentials correct\? Try using a PAT token \(in case you are using Github\) as your password\. Error -1: cannot redirect from 'localhost' to '127\.0\.0\.1' in git_plugin\.cpp:GitPlugin::_(?:fetch|pull)#L\d+",
+        r"ERROR: GitPlugin: Failed to push\. Error -1: cannot redirect from 'localhost' to '127\.0\.0\.1' in git_plugin\.cpp:GitPlugin::_push#L\d+",
+    ),
+    "transport_hook_rejection": (
+        r"ERROR: GitPlugin: Push rejected: refs/heads/main pre-receive hook declined",
+        r"ERROR: GitPlugin: Failed to push\. Error -7: remote rejected a reference update in git_plugin\.cpp:GitPlugin::_push#L\d+",
     ),
 }
 

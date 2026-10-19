@@ -180,9 +180,12 @@ def run_provider(redot: Path, project: Path, env: dict[str, str]) -> dict[str, o
     if result is None:
         result = {"passed": False}
     identity = engine_identity(redot, project)
+    diagnostic_scenario = {
+        "redirect": "transport_redirect", "hook-rejection": "transport_hook_rejection",
+    }.get(result.get("negative_case"), "")
     diagnostics = check_process(process, identity=identity,
                                 result_passed=result.get("passed") is True, provider_active=True,
-                                providers_freed=result.get("providers_freed"))
+                                providers_freed=result.get("providers_freed"), scenario=diagnostic_scenario)
     return {
         "redot_version": identity,
         "exit_code": process.returncode,
