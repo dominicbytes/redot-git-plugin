@@ -69,6 +69,11 @@ def ssl_platform_options(env):
         "no-legacy",
         "no-shared",
         "no-tests",
+        # libgit2 initializes OpenSSL with default options, which would load
+        # openssl.cnf from OPENSSL_CONF or the baked-in OPENSSLDIR. That
+        # directory is not owned by the plugin and may be writable by other
+        # local users, and a config can load arbitrary provider modules.
+        "no-autoload-config",
     ]
     if env["platform"] == "windows":
         ssl_config_options.append("enable-capieng")

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -13,10 +14,26 @@ from pathlib import Path
 from provider_layout import install_provider
 
 
-def run(command: list[str], cwd: Path, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+# An OpenSSL configuration that cannot load. The provider must ignore it,
+# because a config file can make OpenSSL load arbitrary provider modules.
+PLANTED_OPENSSL_CONFIG = """openssl_conf = openssl_init
+[openssl_init]
+providers = provider_sect
+[provider_sect]
+planted = planted_sect
+[planted_sect]
+module = planted-provider-that-does-not-exist
+activate = 1
+"""
+
+
+def run(
+    command: list[str], cwd: Path, timeout: int = 30, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
         cwd=cwd,
+        env=env,
         check=False,
         capture_output=True,
         encoding="utf-8",
@@ -109,7 +126,10 @@ def main() -> int:
             "--quit-after",
             "120",
         ]
-        process = run(command, project, timeout=45)
+        planted_config = temp_root / "planted-openssl.cnf"
+        planted_config.write_text(PLANTED_OPENSSL_CONFIG, encoding="utf-8", newline="\n")
+        provider_env = dict(os.environ, OPENSSL_CONF=str(planted_config))
+        process = run(command, project, timeout=45, env=provider_env)
         combined = process.stdout + process.stderr
         result, failures = validate(combined)
         if process.returncode:
