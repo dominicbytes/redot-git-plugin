@@ -39,7 +39,7 @@ func _run() -> void:
 			result = _run_resolution()
 		"security":
 			result = _run_security()
-		"security_authority", "security_ambiguous_query", "security_ambiguous_fragment", "security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback", "security_redirect_cross", "security_redirect_same":
+		"security_authority", "security_uri_output", "security_ambiguous_query", "security_ambiguous_fragment", "security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback", "security_redirect_cross", "security_redirect_same":
 			result = _run_security_regression(scenario)
 		"edge":
 			result = _run_edge_matrix()
@@ -703,6 +703,20 @@ func _run_security_regression(scenario: String) -> Dictionary:
 				provider.call("test_create_remote", "ssh-empty-" + str(checks.size()), ssh_empty)
 				checks.append(not provider.call("test_get_remotes").has("ssh-empty-" + str(checks.size())))
 				checks.append(provider.call("test_sanitize_output", ssh_empty) == "ssh://[redacted]@example.invalid/repo")
+			result["checks"] = checks
+			passed = not checks.has(false) and passed
+		"security_uri_output":
+			var cases: Array = [
+				["https://a:ONE_SECRET@host/r,https://b:TWO_SECRET@host/r", "https://[redacted]@host/r,https://[redacted]@host/r"],
+				["https://a:ONE_SECRET@host/r;https://b:TWO_SECRET@host/r", "https://[redacted]@host/r;https://[redacted]@host/r"],
+				["https://host/r,https://b:TWO_SECRET@host/r", "https://host/r,https://[redacted]@host/r"],
+				["https://host/repo?redirect=https://u:URL_SECRET@host/b", "https://host/repo?redirect=https://[redacted]@host/b"],
+			]
+			var checks: Array = []
+			for pair: Array in cases:
+				checks.append(provider.call("test_sanitize_output", pair[0]) == pair[1])
+			# Many URI occurrences in one token must complete without rescanning suffixes.
+			checks.append(provider.call("test_sanitize_output", "https://u:URL_SECRET@host/r,".repeat(2000)) == "https://[redacted]@host/r,".repeat(2000))
 			result["checks"] = checks
 			passed = not checks.has(false) and passed
 		"security_urls":

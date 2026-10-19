@@ -492,7 +492,7 @@ def main() -> int:
                     "sentinel_free": "URL_SECRET" not in str(report["output"]),
                 }
                 report["passed"] = report["passed"] and not events and report["authority_verification"]["sentinel_free"]
-        for scenario in ("security_authority", "security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback"):
+        for scenario in ("security_authority", "security_uri_output", "security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback"):
             _case_root, _case_project, report = execute(
                 scenario, lambda project, _temp_root: initialize_repository(project, arguments.git)
             )

@@ -258,12 +258,37 @@ godot::String sanitize_git_output(const godot::String &text, const Credentials *
 				++end;
 			}
 			const std::string token = original.substr(start, end - start);
-			const size_t scheme = token.find("://");
-			const size_t authority = scheme == std::string::npos ? 0 : scheme + 3;
-			const size_t authority_end = token.find('/', authority);
-			const size_t at = token.rfind('@', authority_end == std::string::npos ? token.size() : authority_end);
-			if (at != std::string::npos && at >= authority && (scheme != std::string::npos || token.find(':', at) != std::string::npos)) {
-				ends[start + authority] = std::max(ends[start + authority], start + at);
+			// Visit every URI occurrence, including adjacent and nested URLs.
+			// Keep only the current authority: each byte is examined once.
+			size_t authority = std::string::npos;
+			size_t at = std::string::npos;
+			bool uri = false;
+			auto mark_authority = [&]() {
+				if (at != std::string::npos && at > authority) {
+					ends[start + authority] = std::max(ends[start + authority], start + at);
+				}
+				at = std::string::npos;
+				authority = std::string::npos;
+			};
+			for (size_t i = 0; i < token.size(); ++i) {
+				if (token.compare(i, 3, "://") == 0) {
+					mark_authority();
+					authority = i + 3;
+					uri = true;
+					i += 2;
+				} else if (token[i] == '/') {
+					mark_authority();
+				} else if (token[i] == '@' && authority != std::string::npos) {
+					at = i;
+				}
+			}
+			mark_authority();
+			if (!uri) {
+				const size_t end = token.find('/');
+				const size_t scp_at = token.rfind('@', end == std::string::npos ? token.size() : end);
+				if (scp_at != std::string::npos && token.find(':', scp_at) != std::string::npos) {
+					ends[start] = std::max(ends[start], start + scp_at);
+				}
 			}
 			// Diagnostics are unstructured: conservatively redact query-like
 			// secrets even in text that is not a configured remote URI.
