@@ -251,6 +251,8 @@ def prepare_index_regression(project: Path, git: str, scenario: str) -> None:
     files = {"Name.txt": "original blob\n"}
     if scenario.startswith("missing_index_"):
         files = {"selected.txt": "selected baseline\n", "external.txt": "external baseline\n"}
+    elif scenario == "directory_to_file_unstage":
+        files = {"node/child.txt": "original child\n"}
     for name, content in files.items():
         path = project / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -264,12 +266,18 @@ def prepare_index_regression(project: Path, git: str, scenario: str) -> None:
         checked([git, "mv", "intermediate.txt", "name.txt"], project)
     elif scenario.startswith("missing_index_"):
         (project / "selected.txt").write_text("selected changed\n", encoding="utf-8", newline="\n")
+    elif scenario == "directory_to_file_unstage":
+        (project / "node" / "child.txt").unlink()
+        (project / "node").rmdir()
+        (project / "node").write_text("replacement file\n", encoding="utf-8", newline="\n")
+        checked([git, "add", "--all", "--", "node"], project)
 
 
 def execute_index_regressions(execute: Callable[[str, Prepare], tuple[Path, Path, dict[str, object]]], git: str) -> None:
     scenarios = (
         "case_unstage_old_first", "case_unstage_new_first",
         "missing_index_stage", "missing_index_unstage", "missing_index_commit",
+        "directory_to_file_unstage",
     )
     for scenario in scenarios:
         _root, project, report = execute(
@@ -277,7 +285,7 @@ def execute_index_regressions(execute: Callable[[str, Prepare], tuple[Path, Path
         )
         expected = ""
         tree_command = [git, "ls-tree", "-r", "--format=%(objectmode) %(objectname) 0%x09%(path)", "HEAD"]
-        if scenario.startswith("case_unstage_"):
+        if scenario.startswith("case_unstage_") or scenario == "directory_to_file_unstage":
             expected = command_output(tree_command, project)
         elif scenario == "missing_index_stage":
             blob = command_output([git, "hash-object", "selected.txt"], project)

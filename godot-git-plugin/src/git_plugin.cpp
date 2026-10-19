@@ -272,6 +272,10 @@ void GitPlugin::_unstage_file(const godot::String &file_path) {
 		GIT2_CALL_IGNORE(git_tree_entry_bypath(Capture(tree_entry), reinterpret_cast<git_tree *>(tree.get()), c_path.data), "Could not find " + file_path + " at HEAD", { GIT_ENOTFOUND });
 	}
 
+	// A directory at HEAD has no index entry of its own to restore.
+	if (tree_entry && git_tree_entry_type(tree_entry.get()) == GIT_OBJECT_TREE) {
+		tree_entry.reset();
+	}
 	// The index comparator can ignore case even though HEAD paths are exact.
 	if (index_has_exact_path(index.get(), c_path.data)) {
 		GIT2_CALL(git_index_remove_bypath(index.get(), c_path.data), "Could not remove " + file_path + " from index");
