@@ -43,6 +43,10 @@ func _run() -> void:
 			result = _run_edge_matrix()
 		"detached":
 			result = _run_detached()
+		"case_unstage_old_first", "case_unstage_new_first", "missing_index_stage", "missing_index_unstage", "missing_index_commit", "directory_to_file_unstage", "file_to_directory_stage", "gitlink_stage":
+			result = _run_index_regression(scenario)
+		"literal_stage", "literal_unstage", "literal_discard", "external_stage", "external_unstage", "external_commit", "rename_commit", "staged_path", "branch_collision", "merge_external", "merge_aborted", "merge_resumed", "merge_octopus", "pending_pull", "legacy_encoding", "unborn_line":
+			result = _run_local_regression(scenario)
 		_:
 			result = _run_local()
 	var freed := true
@@ -292,7 +296,9 @@ func _run_edge_matrix() -> Dictionary:
 	result["latest_diff_count"] = provider.call("test_get_diff", latest_id, 0).size()
 	result["modified_diff_count"] = provider.call("test_get_diff", "modified.txt", TREE_AREA_UNSTAGED).size()
 	result["staged_diff_count"] = provider.call("test_get_diff", "staged-new.txt", TREE_AREA_STAGED).size()
-	result["large_diff_count"] = provider.call("test_get_diff", "large.txt", TREE_AREA_UNSTAGED).size()
+	var large_diff: Array = provider.call("test_get_diff", "large.txt", TREE_AREA_UNSTAGED)
+	result["large_diff_count"] = large_diff.size()
+	result["large_diff_complete"] = _large_diff_complete(large_diff)
 	result["binary_diff_count"] = provider.call("test_get_diff", "binary.bin", TREE_AREA_UNSTAGED).size()
 
 	provider.call("test_stage_file", "unicodé file.txt")
@@ -313,7 +319,8 @@ func _run_edge_matrix() -> Dictionary:
 		result.initialize
 		and _has_status(status, "modified.txt", TREE_AREA_UNSTAGED)
 		and _has_change(status, "deleted.txt", 3, TREE_AREA_UNSTAGED)
-		and _has_change(status, "renamed.txt", 2, TREE_AREA_UNSTAGED)
+		and _has_change(status, "renamed.txt", 0, TREE_AREA_UNSTAGED)
+		and _has_change(status, "rename-old.txt", 3, TREE_AREA_UNSTAGED)
 		and _has_change(status, "staged-rename-old.txt", 3, TREE_AREA_STAGED)
 		and _has_change(status, "staged-renamed.txt", 0, TREE_AREA_STAGED)
 		and _has_status(status, "staged-new.txt", TREE_AREA_STAGED)
@@ -323,6 +330,7 @@ func _run_edge_matrix() -> Dictionary:
 		and result.modified_diff_count > 0
 		and result.staged_diff_count > 0
 		and result.large_diff_count > 0
+		and result.large_diff_complete
 		and result.binary_diff_count > 0
 		and result.history_after.size() == 1
 		and result.history_after[0].get("message", "") == "Provider café\nsecond line"
@@ -416,3 +424,170 @@ func _local_passed(result: Dictionary) -> bool:
 		and result.get("remotes_created", []).has("fixture")
 		and not result.get("remotes_removed", []).has("fixture")
 	)
+
+
+func _git(arguments: PackedStringArray) -> Dictionary:
+	var output: Array = []
+	var command := PackedStringArray(["-C", ProjectSettings.globalize_path("res://")])
+	command.append_array(arguments)
+	var code := OS.execute("git", command, output, true)
+	return {"code": code, "text": "".join(output).strip_edges()}
+
+
+func _large_diff_complete(files: Array) -> bool:
+	var added := 0
+	var last := false
+	for file: Dictionary in files:
+		for hunk: Dictionary in file.get("diff_hunks", []):
+			for line: Dictionary in hunk.get("diff_lines", []):
+				if line.get("status") == "+":
+					added += 1
+					last = last or line.get("new_line_no") == 20000
+	return added >= 10000 and last
+
+
+func _run_index_regression(scenario: String) -> Dictionary:
+	var provider := _new_provider()
+	if provider == null:
+		return {"scenario": scenario, "passed": false}
+	var result: Dictionary = {"scenario": scenario}
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	if not result.initialize:
+		result["passed"] = false
+		return result
+	var status: Array = provider.call("test_get_modified_files_data")
+	var ok := true
+	match scenario:
+		"case_unstage_old_first", "case_unstage_new_first":
+			var paths: Array[String] = []
+			for row: Dictionary in status:
+				if row.get("area") == TREE_AREA_STAGED:
+					paths.append(row.file_path)
+			paths.sort()
+			ok = paths == ["Name.txt", "name.txt"]
+			if scenario == "case_unstage_new_first":
+				paths.reverse()
+			for path: String in paths:
+				provider.call("test_unstage_file", path)
+			result["unstage_order"] = paths
+		"missing_index_stage", "missing_index_unstage", "missing_index_commit":
+			ok = DirAccess.remove_absolute(ProjectSettings.globalize_path("res://.git/index")) == OK
+			result["index_deleted"] = ok
+			if scenario == "missing_index_stage":
+				provider.call("test_stage_file", "selected.txt")
+			elif scenario == "missing_index_unstage":
+				provider.call("test_unstage_file", "selected.txt")
+			else:
+				provider.call("test_commit", "Commit externally cleared index")
+		"directory_to_file_unstage":
+			ok = _has_status(status, "node", TREE_AREA_STAGED) and _has_status(status, "node/child.txt", TREE_AREA_STAGED)
+			provider.call("test_unstage_file", "node")
+			result["intermediate_entries"] = _git(["ls-files", "--stage"]).text
+			ok = ok and result.intermediate_entries.is_empty()
+			provider.call("test_unstage_file", "node/child.txt")
+		"file_to_directory_stage":
+			ok = _has_status(status, "node", TREE_AREA_UNSTAGED)
+			provider.call("test_stage_file", "node")
+			ok = ok and FileAccess.get_file_as_string("res://node/child.txt") == "untracked child\n"
+		"gitlink_stage":
+			provider.call("test_stage_file", "node")
+	result["index_entries"] = _git(["ls-files", "--stage"]).text
+	result["passed"] = ok
+	return result
+
+
+func _run_local_regression(scenario: String) -> Dictionary:
+	var provider := _new_provider()
+	if provider == null:
+		return {"scenario": scenario, "passed": false}
+	var result: Dictionary = {"scenario": scenario}
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	if not result.initialize:
+		result["passed"] = false
+		return result
+	var ok := true
+	match scenario:
+		"literal_stage":
+			provider.call("test_stage_file", "asset[1].txt")
+			var status: Array = provider.call("test_get_modified_files_data")
+			ok = _has_status(status, "asset[1].txt", TREE_AREA_STAGED) and not _has_status(status, "asset1.txt", TREE_AREA_STAGED)
+		"literal_unstage":
+			provider.call("test_unstage_file", "asset[1].txt")
+			var status: Array = provider.call("test_get_modified_files_data")
+			ok = not _has_status(status, "asset[1].txt", TREE_AREA_STAGED) and _has_status(status, "asset1.txt", TREE_AREA_STAGED)
+		"literal_discard":
+			provider.call("test_discard_file", "asset[1].txt")
+			ok = FileAccess.get_file_as_string("res://asset[1].txt").strip_edges() == "base" and FileAccess.get_file_as_string("res://asset1.txt").strip_edges() == "changed"
+		"external_stage", "external_unstage", "external_commit":
+			provider.call("test_get_modified_files_data")
+			ok = _git(["add", "external.txt"]).code == 0
+			if scenario == "external_stage":
+				provider.call("test_stage_file", "selected.txt")
+			elif scenario == "external_unstage":
+				provider.call("test_unstage_file", "selected.txt")
+			else:
+				provider.call("test_commit", "Keep external staging")
+			var command := PackedStringArray(["show", "HEAD:external.txt"]) if scenario == "external_commit" else PackedStringArray(["show", ":external.txt"])
+			var external := _git(command)
+			ok = ok and external.code == 0 and external.text == "external changed"
+		"rename_commit":
+			var status: Array = provider.call("test_get_modified_files_data")
+			for row: Dictionary in status:
+				if row.get("area") == TREE_AREA_UNSTAGED:
+					provider.call("test_stage_file", row.file_path)
+			provider.call("test_commit", "Commit rename")
+			ok = _git(["ls-tree", "--name-only", "HEAD"]).text.split("\n") == PackedStringArray(["destination.txt"])
+		"staged_path":
+			var status: Array = provider.call("test_get_modified_files_data")
+			ok = _has_status(status, "index.txt", TREE_AREA_STAGED) and not _has_status(status, "working.txt", TREE_AREA_STAGED)
+		"branch_collision":
+			ok = provider.call("test_checkout_branch", "feature")
+			result["branch_content"] = FileAccess.get_file_as_string("res://branch.txt").strip_edges()
+			result["head_blob"] = _git(["rev-parse", "HEAD:branch.txt"]).text
+			result["index_blob"] = _git(["rev-parse", ":branch.txt"]).text
+			ok = ok and result.branch_content == "feature" and result.head_blob == result.index_blob and _git(["diff-index", "--quiet", "HEAD"]).code == 0
+		"merge_external", "merge_aborted", "merge_resumed", "merge_octopus":
+			if scenario == "merge_external":
+				ok = _git(["merge", "--no-ff", "--no-commit", "side"]).code == 0
+			if scenario == "merge_aborted":
+				ok = _git(["merge", "--abort"]).code == 0
+			var expected: Array = [_git(["rev-parse", "HEAD"]).text]
+			if scenario != "merge_aborted":
+				for oid: String in FileAccess.get_file_as_string("res://.git/MERGE_HEAD").strip_edges().split("\n"):
+					expected.append(oid)
+			provider.call("test_commit", "Commit current repository state")
+			var actual: PackedStringArray = _git(["rev-list", "--parents", "-n", "1", "HEAD"]).text.split(" ")
+			actual.remove_at(0)
+			ok = ok and Array(actual) == expected and not FileAccess.file_exists("res://.git/MERGE_HEAD")
+		"pending_pull":
+			var before := FileAccess.get_file_as_bytes("res://.git/MERGE_HEAD")
+			provider.call("test_pull", "origin")
+			ok = FileAccess.file_exists("res://.git/MERGE_HEAD") and FileAccess.get_file_as_bytes("res://.git/MERGE_HEAD") == before
+		"legacy_encoding":
+			var history: Array = provider.call("test_get_previous_commits", 10)
+			var messages: Array = []
+			var authors: Array = []
+			for commit: Dictionary in history:
+				messages.append(commit.get("message", ""))
+				authors.append(commit.get("author", ""))
+			result["messages"] = messages
+			result["authors"] = authors
+			ok = messages.has("Fallback \u00e9\n") and messages.has("Declared \u00c3\u00a9\n") and messages.has("Alias \u00c3\u00a9\n")
+			ok = ok and authors.count("Jos\u00e9 <fixture@example.invalid>") == 3
+			var diff: Array = provider.call("test_get_diff", "legacy.txt", TREE_AREA_UNSTAGED)
+			var contents := ""
+			for file: Dictionary in diff:
+				for hunk: Dictionary in file.get("diff_hunks", []):
+					for line: Dictionary in hunk.get("diff_lines", []):
+						contents += line.get("content", "")
+			result["legacy_contents"] = contents
+			ok = ok and contents.contains("caf\u00e9") and contents.contains("\u00ff changed") and not contents.contains("\ufffd")
+		"unborn_line":
+			_write_file("res://initial.txt", "staged\n")
+			provider.call("test_stage_file", "initial.txt")
+			var diff: Array = provider.call("test_get_line_diff", "initial.txt", "edited\n")
+			ok = not diff.is_empty()
+	result["behavior_passed"] = ok
+	result["shutdown"] = provider.call("test_shutdown")
+	result["passed"] = ok and result.shutdown
+	return result

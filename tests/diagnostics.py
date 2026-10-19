@@ -54,6 +54,7 @@ EXPECTED = {
     ),
     "reject": (r"ERROR: GitPlugin: Failed to push\. Error -11: cannot push because a reference .*",),
     "merge": (r"ERROR: GitPlugin: Changes are staged\. Make a merge commit\.",),
+    "pending_pull": (r"ERROR: GitPlugin: Finish or abort the current repository operation before pulling\.",),
     "conflict": (r"ERROR: GitPlugin: Index has conflicts\. Solve conflicts and make a merge commit\.",),
     "security": (
         r"ERROR: GitPlugin: Remote URLs must not contain credentials\. Use Redot's version-control credential fields instead\.",

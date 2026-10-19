@@ -314,6 +314,11 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertTrue(self.classify(text, scenario="merge")["passed"])
         self.assertFalse(self.classify(text, scenario="local")["passed"])
 
+    def test_pending_pull_diagnostic_is_scoped(self):
+        text = "ERROR: GitPlugin: Finish or abort the current repository operation before pulling.\nGitPlugin: Shut down"
+        self.assertTrue(self.classify(text, scenario="pending_pull")["passed"])
+        self.assertFalse(self.classify(text, scenario="local")["passed"])
+
     def test_controlled_environment_discards_host_git_overrides(self):
         with patch.dict(os.environ, {"GIT_DIR": "poison", "GIT_CONFIG_COUNT": "99"}):
             env = controlled_environment()

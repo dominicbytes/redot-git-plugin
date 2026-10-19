@@ -1,6 +1,7 @@
 #include "git_plugin.h"
 
 #include <git2/tree.h>
+#include <cstring>
 #include "godot_cpp/core/class_db.hpp"
 #include "godot_cpp/classes/file_access.hpp"
 #include "godot_cpp/classes/dir_access.hpp"
@@ -29,6 +30,59 @@
 	}
 
 #define COMMA ,
+
+// Git stores byte strings; only ask the engine to decode validated UTF-8.
+static bool is_valid_utf8(const char *text, size_t length) {
+	for (size_t i = 0; i < length;) {
+		const unsigned char first = static_cast<unsigned char>(text[i++]);
+		if (first < 0x80) {
+			continue;
+		}
+		int remaining;
+		uint32_t codepoint;
+		uint32_t minimum;
+		if (first >= 0xc2 && first <= 0xdf) {
+			remaining = 1;
+			codepoint = first & 0x1f;
+			minimum = 0x80;
+		} else if (first >= 0xe0 && first <= 0xef) {
+			remaining = 2;
+			codepoint = first & 0x0f;
+			minimum = 0x800;
+		} else if (first >= 0xf0 && first <= 0xf4) {
+			remaining = 3;
+			codepoint = first & 0x07;
+			minimum = 0x10000;
+		} else {
+			return false;
+		}
+		if (length - i < remaining) {
+			return false;
+		}
+		while (remaining--) {
+			const unsigned char next = static_cast<unsigned char>(text[i++]);
+			if ((next & 0xc0) != 0x80) {
+				return false;
+			}
+			codepoint = (codepoint << 6) | (next & 0x3f);
+		}
+		if (codepoint < minimum || codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static godot::String decode_git_text(const char *text, size_t length, bool latin1 = false) {
+	if (!latin1 && is_valid_utf8(text, length)) {
+		return godot::String::utf8(text, length);
+	}
+	std::vector<char32_t> decoded(length + 1, 0);
+	for (size_t i = 0; i < length; ++i) {
+		decoded[i] = static_cast<unsigned char>(text[i]);
+	}
+	return godot::String(decoded.data());
+}
 
 void GitPlugin::_bind_methods() {
 #ifdef REDOT_GIT_TEST_HARNESS
@@ -128,14 +182,20 @@ void GitPlugin::_discard_file(const godot::String &file_path) {
 	CString c_path(file_path);
 	char *paths[] = { c_path.data };
 	opts.paths = { paths, 1 };
-	opts.checkout_strategy = GIT_CHECKOUT_FORCE;
+	opts.checkout_strategy = GIT_CHECKOUT_FORCE | GIT_CHECKOUT_DISABLE_PATHSPEC_MATCH;
 
 	GIT2_CALL(git_checkout_index(repo.get(), nullptr, &opts), "Could not checkout index");
+}
+
+static bool index_has_exact_path(git_index *index, const char *path) {
+	size_t position;
+	return git_index_find(&position, index, path) == 0 && std::strcmp(git_index_get_byindex(index, position)->path, path) == 0;
 }
 
 void GitPlugin::_commit(const godot::String &msg) {
 	git_index_ptr repo_index;
 	GIT2_CALL(git_repository_index(Capture(repo_index), repo.get()), "Could not get repository index");
+	GIT2_CALL(git_index_read(repo_index.get(), 1), "Could not reload repository index");
 
 	git_oid tree_id;
 	GIT2_CALL(git_index_write_tree(&tree_id, repo_index.get()), "Could not write index to tree");
@@ -155,77 +215,83 @@ void GitPlugin::_commit(const godot::String &msg) {
 		GIT2_CALL(git_commit_lookup(Capture(parent_commit), repo.get(), &parent_commit_id), "Could not lookup parent commit data");
 	}
 
-	git_oid new_commit_id;
-	if (!has_merge) {
-		GIT2_CALL(
-				git_commit_create_v(
-						&new_commit_id,
-						repo.get(),
-						"HEAD",
-						default_sign.get(),
-						default_sign.get(),
-						"UTF-8",
-						CString(msg).data,
-						tree.get(),
-						parent_commit.get() ? 1 : 0,
-						parent_commit.get()),
-				"Could not create commit");
-	} else {
-		git_commit_ptr fetchhead_commit;
-		GIT2_CALL(git_commit_lookup(Capture(fetchhead_commit), repo.get(), &pull_merge_oid), "Could not lookup commit pointed to by HEAD");
+	const int state = git_repository_state(repo.get());
+	GIT2_CALL(state < 0 ? state : 0, "Could not read repository state");
+	std::vector<git_oid> merge_heads;
+	if (state == GIT_REPOSITORY_STATE_MERGE) {
+		GIT2_CALL(git_repository_mergehead_foreach(repo.get(), mergehead_foreach_cb, &merge_heads), "Could not read merge heads");
+	}
 
-		GIT2_CALL(
-				git_commit_create_v(
-						&new_commit_id,
-						repo.get(),
-						"HEAD",
-						default_sign.get(),
-						default_sign.get(),
-						"UTF-8",
-						CString(msg).data,
-						tree.get(),
-						2,
-						parent_commit.get(),
-						fetchhead_commit.get()),
-				"Could not create merge commit");
-		has_merge = false;
+	std::vector<git_commit_ptr> merge_commits;
+	std::vector<const git_commit *> parents;
+	if (parent_commit) {
+		parents.push_back(parent_commit.get());
+	}
+	for (const git_oid &oid : merge_heads) {
+		git_commit_ptr merge_commit;
+		GIT2_CALL(git_commit_lookup(Capture(merge_commit), repo.get(), &oid), "Could not lookup merge parent");
+		parents.push_back(merge_commit.get());
+		merge_commits.push_back(std::move(merge_commit));
+	}
+
+	git_oid new_commit_id;
+	GIT2_CALL(git_commit_create(&new_commit_id, repo.get(), "HEAD", default_sign.get(), default_sign.get(), "UTF-8", CString(msg).data, tree.get(), parents.size(), parents.data()), "Could not create commit");
+	if (state == GIT_REPOSITORY_STATE_MERGE) {
 		GIT2_CALL(git_repository_state_cleanup(repo.get()), "Could not clean repository state");
 	}
+	has_merge = false;
 }
 
 void GitPlugin::_stage_file(const godot::String &file_path) {
 	CString c_path(file_path);
-	char *paths[] = { c_path.data };
-	git_strarray array = { paths, 1 };
-
 	git_index_ptr index;
 	GIT2_CALL(git_repository_index(Capture(index), repo.get()), "Could not get repository index");
-	GIT2_CALL(git_index_add_all(index.get(), &array, GIT_INDEX_ADD_DEFAULT | GIT_INDEX_ADD_DISABLE_PATHSPEC_MATCH, nullptr, nullptr), "Could not add " + file_path + " to index");
+	GIT2_CALL(git_index_read(index.get(), 1), "Could not reload repository index");
+	const int add_error = git_index_add_bypath(index.get(), c_path.data);
+	const git_index_entry *entry = add_error == GIT_EDIRECTORY ? git_index_get_bypath(index.get(), c_path.data, GIT_INDEX_STAGE_NORMAL) : nullptr;
+	const bool replaced_file = add_error == GIT_EDIRECTORY && entry && std::strcmp(entry->path, c_path.data) == 0 && entry->mode != GIT_FILEMODE_COMMIT;
+	if (add_error == GIT_ENOTFOUND || replaced_file) {
+		if (index_has_exact_path(index.get(), c_path.data)) {
+			GIT2_CALL(git_index_remove_bypath(index.get(), c_path.data), "Could not remove " + file_path + " from index");
+		}
+	} else {
+		GIT2_CALL(add_error, "Could not add " + file_path + " to index");
+	}
 	GIT2_CALL(git_index_write(index.get()), "Could not write changes to disk");
 }
 
 void GitPlugin::_unstage_file(const godot::String &file_path) {
 	CString c_path(file_path);
-	char *paths[] = { c_path.data };
-	git_strarray array = { paths, 1 };
+	git_index_ptr index;
+	GIT2_CALL(git_repository_index(Capture(index), repo.get()), "Could not get repository index");
+	GIT2_CALL(git_index_read(index.get(), 1), "Could not reload repository index");
 
 	git_reference_ptr head;
 	GIT2_CALL_IGNORE(git_repository_head(Capture(head), repo.get()), "Could not find repository HEAD", { GIT_ENOTFOUND COMMA GIT_EUNBORNBRANCH });
 
+	git_tree_entry_ptr tree_entry;
 	if (head) {
-		git_object_ptr head_commit;
-		GIT2_CALL(git_reference_peel(Capture(head_commit), head.get(), GIT_OBJ_COMMIT), "Could not peel HEAD reference");
-		GIT2_CALL(git_reset_default(repo.get(), head_commit.get(), &array), "Could not reset " + file_path + " to state at HEAD");
-	} else {
-		// If there is no HEAD commit, we should just remove the file from the index.
-
-		CString c_path(file_path);
-
-		git_index_ptr index;
-		GIT2_CALL(git_repository_index(Capture(index), repo.get()), "Could not get repository index");
-		GIT2_CALL(git_index_remove_bypath(index.get(), c_path.data), "Could not add " + file_path + " to index");
-		GIT2_CALL(git_index_write(index.get()), "Could not write changes to disk");
+		git_object_ptr tree;
+		GIT2_CALL(git_reference_peel(Capture(tree), head.get(), GIT_OBJECT_TREE), "Could not peel HEAD tree");
+		GIT2_CALL_IGNORE(git_tree_entry_bypath(Capture(tree_entry), reinterpret_cast<git_tree *>(tree.get()), c_path.data), "Could not find " + file_path + " at HEAD", { GIT_ENOTFOUND });
 	}
+
+	// A directory at HEAD has no index entry of its own to restore.
+	if (tree_entry && git_tree_entry_type(tree_entry.get()) == GIT_OBJECT_TREE) {
+		tree_entry.reset();
+	}
+	// The index comparator can ignore case even though HEAD paths are exact.
+	if (index_has_exact_path(index.get(), c_path.data)) {
+		GIT2_CALL(git_index_remove_bypath(index.get(), c_path.data), "Could not remove " + file_path + " from index");
+	}
+	if (tree_entry) {
+		git_index_entry entry = {};
+		entry.path = c_path.data;
+		entry.mode = git_tree_entry_filemode(tree_entry.get());
+		git_oid_cpy(&entry.id, git_tree_entry_id(tree_entry.get()));
+		GIT2_CALL(git_index_add(index.get(), &entry), "Could not restore " + file_path + " in index");
+	}
+	GIT2_CALL(git_index_write(index.get()), "Could not write changes to disk");
 }
 
 godot::TypedArray<godot::Dictionary> GitPlugin::_get_modified_files_data() {
@@ -234,7 +300,7 @@ godot::TypedArray<godot::Dictionary> GitPlugin::_get_modified_files_data() {
 	git_status_options opts = GIT_STATUS_OPTIONS_INIT;
 	opts.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
 	opts.flags = GIT_STATUS_OPT_EXCLUDE_SUBMODULES;
-	opts.flags |= GIT_STATUS_OPT_INCLUDE_UNTRACKED | GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX | GIT_STATUS_OPT_RENAMES_INDEX_TO_WORKDIR | GIT_STATUS_OPT_SORT_CASE_SENSITIVELY | GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS;
+	opts.flags |= GIT_STATUS_OPT_INCLUDE_UNTRACKED | GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX | GIT_STATUS_OPT_SORT_CASE_SENSITIVELY | GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS;
 
 	git_status_list_ptr statuses;
 	GIT2_CALL_R(git_status_list_new(Capture(statuses), repo.get(), &opts), "Could not get status information from repository", godot::TypedArray<godot::Dictionary>());
@@ -266,18 +332,14 @@ godot::TypedArray<godot::Dictionary> GitPlugin::_get_modified_files_data() {
 	size_t count = git_status_list_entrycount(statuses.get());
 	for (size_t i = 0; i < count; ++i) {
 		const git_status_entry *entry = git_status_byindex(statuses.get(), i);
-		godot::String path;
-		if (entry->index_to_workdir) {
-			path = godot::String::utf8(entry->index_to_workdir->new_file.path);
-		} else {
-			path = godot::String::utf8(entry->head_to_index->new_file.path);
-		}
-
 		if (entry->status & git_status_wt) {
+			const git_diff_delta *delta = entry->index_to_workdir ? entry->index_to_workdir : entry->head_to_index;
+			godot::String path = godot::String::utf8(delta->new_file.path);
 			stats_files.push_back(create_status_file(path, change_type_for_status(git_status_t(entry->status & git_status_wt)), TREE_AREA_UNSTAGED));
 		}
 
 		if (entry->status & git_status_index) {
+			godot::String path = godot::String::utf8(entry->head_to_index->new_file.path);
 			if (entry->status & GIT_STATUS_INDEX_RENAMED) {
 				godot::String old_path = godot::String::utf8(entry->head_to_index->old_file.path);
 				stats_files.push_back(create_status_file(old_path, map_changes.at(GIT_STATUS_INDEX_DELETED), TREE_AREA_STAGED));
@@ -367,9 +429,6 @@ godot::TypedArray<godot::Dictionary> GitPlugin::_get_line_diff(const godot::Stri
 		return godot::TypedArray<godot::Dictionary>();
 	}
 
-	git_reference_ptr head;
-	GIT2_CALL_R(git_repository_head(Capture(head), repo.get()), "Failed to load repository head", godot::TypedArray<godot::Dictionary>());
-
 	git_blob_ptr blob;
 	GIT2_CALL_R(git_blob_lookup(Capture(blob), repo.get(), &entry->id), "Failed to load head blob", godot::TypedArray<godot::Dictionary>());
 
@@ -444,10 +503,13 @@ godot::TypedArray<godot::Dictionary> GitPlugin::_get_previous_commits(int32_t ma
 		GIT2_CALL_R(git_commit_lookup(Capture(commit), repo.get(), &oid), "Failed to lookup the commit", commits);
 
 		git_oid_tostr(commit_id, GIT_OID_HEXSZ + 1, git_commit_id(commit.get()));
-		godot::String msg = godot::String::utf8(git_commit_message(commit.get()));
+		const char *encoding = git_commit_message_encoding(commit.get());
+		const godot::String normalized_encoding = encoding ? godot::String(encoding).to_lower().replace("-", "") : godot::String();
+		const char *message = git_commit_message(commit.get());
+		godot::String msg = decode_git_text(message, std::strlen(message), normalized_encoding == "iso88591" || normalized_encoding == "latin1");
 
 		const git_signature *sig = git_commit_author(commit.get());
-		godot::String author = godot::String::utf8(sig->name) + " <" + godot::String::utf8(sig->email) + ">";
+		godot::String author = decode_git_text(sig->name, std::strlen(sig->name)) + " <" + decode_git_text(sig->email, std::strlen(sig->email)) + ">";
 
 		commits.push_back(create_commit(msg, author, commit_id, sig->when.time, sig->when.offset));
 	}
@@ -480,6 +542,13 @@ void GitPlugin::_fetch(const godot::String &remote) {
 }
 
 void GitPlugin::_pull(const godot::String &remote) {
+	const int state = git_repository_state(repo.get());
+	GIT2_CALL(state < 0 ? state : 0, "Could not read repository state");
+	if (state != GIT_REPOSITORY_STATE_NONE) {
+		godot::UtilityFunctions::push_error("GitPlugin: Finish or abort the current repository operation before pulling.");
+		return;
+	}
+
 	godot::UtilityFunctions::print("GitPlugin: Performing pull from ", remote);
 
 	git_remote_ptr remote_object;
@@ -566,8 +635,6 @@ void GitPlugin::_pull(const godot::String &remote) {
 	} else if (merge_analysis & GIT_MERGE_ANALYSIS_UP_TO_DATE) {
 		godot::UtilityFunctions::print("GitPlugin: Already up to date");
 
-		GIT2_CALL(git_repository_state_cleanup(repo.get()), "Could not clean repository state");
-
 	} else {
 		godot::UtilityFunctions::push_error("GitPlugin: Can not merge");
 	}
@@ -612,7 +679,7 @@ bool GitPlugin::_checkout_branch(const godot::String &branch_name) {
 	const char *branch_ref_name = git_reference_name(branch.get());
 
 	git_object_ptr treeish;
-	GIT2_CALL_R(git_revparse_single(Capture(treeish), repo.get(), CString(branch_name).data), "Could not find branch head", false);
+	GIT2_CALL_R(git_reference_peel(Capture(treeish), branch.get(), GIT_OBJECT_TREE), "Could not find branch head", false);
 
 	git_checkout_options opts = GIT_CHECKOUT_OPTIONS_INIT;
 	opts.checkout_strategy = GIT_CHECKOUT_SAFE;
@@ -708,7 +775,7 @@ godot::TypedArray<godot::Dictionary> GitPlugin::_parse_diff(git_diff *diff) {
 
 				godot::String status = " "; // We reserve 1 null terminated space to fill the + or the - character at git_diff_line->origin
 				status[0] = git_diff_line->origin;
-				diff_lines.push_back(create_diff_line(git_diff_line->new_lineno, git_diff_line->old_lineno, godot::String::utf8(git_diff_line->content, git_diff_line->content_len), status));
+				diff_lines.push_back(create_diff_line(git_diff_line->new_lineno, git_diff_line->old_lineno, decode_git_text(git_diff_line->content, git_diff_line->content_len), status));
 			}
 
 			diff_hunk = add_line_diffs_into_diff_hunk(diff_hunk, diff_lines);
@@ -772,9 +839,9 @@ bool GitPlugin::_initialize(const godot::String &project_path) {
 		return fail_initialization();
 	}
 	if (git_repository_state(repo.get()) == GIT_REPOSITORY_STATE_MERGE) {
-		pull_merge_oid = {};
-		const int merge_head_error = git_repository_mergehead_foreach(repo.get(), mergehead_foreach_cb, &pull_merge_oid);
-		if (check_errors(merge_head_error, __FUNCTION__, __FILE__, __LINE__, "Could not resume the pending merge") || git_oid_is_zero(&pull_merge_oid)) {
+		std::vector<git_oid> merge_heads;
+		const int merge_head_error = git_repository_mergehead_foreach(repo.get(), mergehead_foreach_cb, &merge_heads);
+		if (check_errors(merge_head_error, __FUNCTION__, __FILE__, __LINE__, "Could not resume the pending merge") || merge_heads.empty()) {
 			return fail_initialization();
 		}
 		has_merge = true;
