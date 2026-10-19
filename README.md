@@ -61,11 +61,15 @@ The official 26.3 editor has intermittent headless shutdown defects also
 reproduced without the plugin. Tests report `known_engine_shutdown_crash`
 and `known_engine_shutdown_leak` separately after a passing scenario and
 completed provider shutdown on the exact pinned official identity. Reported
-provider instances must be freed. Import-only crashes have a separate
-`known_engine_import_crash` category and require no provider activity or
-plugin frames. Unknown diagnostics and earlier failures remain fatal. A
-patched 26.3 editor provides a clean local cross-check; see ADR-0014 for the
-exceptions' removal condition.
+provider instances must be freed. A crash without a banner additionally
+requires the exact Windows access-violation status, explicit confirmation
+that all providers were freed, and only allowlisted output. Shutdown also
+emits its marker after refused initialization when nothing needs releasing.
+Import-only exits use `known_engine_import_crash` or, for exit zero with
+only allowlisted RID/ObjectDB leaks, `known_engine_import_leak`. Both require
+no provider activity or plugin frames. Unknown diagnostics and earlier
+failures remain fatal. A patched 26.3 editor provides a clean local
+cross-check; see ADR-0014 for the exceptions' removal condition.
 
 ## Installation
 

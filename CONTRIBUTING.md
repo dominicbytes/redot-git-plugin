@@ -41,9 +41,14 @@ or local Redot state.
 - Keep credentials ephemeral and sanitize diagnostics before they reach
   Redot's output.
 - Treat a crash, timeout, parse/load error, unexplained warning, or secret
-  sentinel match as a failed check. The only temporary exception is ADR-0013:
-  exact official 26.3 shutdown failures must be reported separately as
-  `known_engine_shutdown_crash`, never described as clean passes. Verify a
+  sentinel match as a failed check. The only temporary exception is ADR-0014:
+  exact official 26.3 exit defects must be reported separately as
+  `known_engine_shutdown_crash`, `known_engine_shutdown_leak`,
+  `known_engine_import_crash`, or `known_engine_import_leak`, never described
+  as clean passes. A banner-less crash requires the exact Windows
+  access-violation status, completed shutdown, a passing result, explicit
+  confirmation that all providers were freed, and only allowlisted output.
+  Import exceptions require no provider activity or plugin frames. Verify a
   patched 26.3 editor cleanly when available.
 
 ## Commits and pull requests

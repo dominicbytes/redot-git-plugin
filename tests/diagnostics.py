@@ -25,6 +25,26 @@ PROVIDER_ACTIVITY = re.compile(
     r"|Found a repository at |Selected repository path:|git_libgit2_init|test_initialize",
     re.I,
 )
+# Ordinary output accepted by the two additional exit exceptions. Diagnostics
+# still pass through the scenario and leak allowlists below.
+ENGINE_OUTPUT = re.compile(
+    r"Redot Engine v26\.3\.stable\.official\.85e520394 \([0-9 :\-]+ UTC\) - https[:]//redotengine\.org"
+    r"|\[\s*(?:\d+%|DONE)\s*\] (?:first_scan_filesystem|update_scripts_classes|loading_editor_layout)(?: \|(?: .*)?)?"
+    r"|={3,}"
+)
+PROVIDER_OUTPUT = re.compile(
+    r"Found a repository at .+|Selected repository path: .+"
+    r"|GitPlugin: (?:Loaded system CA certificates|Shut down|Already up to date|Fast Forwarded|(?:Fetch|Pull|Push) ended)"
+    r"|GitPlugin: Performing (?:(?:fetch|pull) from|push to) [^\r\n]+"
+    r"|REDOT_GIT_PROVIDER_TEST=\{.*\}"
+    r"|(?:remote: )?Counting objects \d+"
+    r"|(?:remote: )?Compressing objects: \d+% \(\d+/\d+\)(?:, done)?"
+    r"|Resolving deltas \d+/\d+|Received \d+/\d+ objects \(\d+\) in \d+ bytes"
+    r"|Writing Objects: \d+% \(\d+/\d+, \d+ bytes done\.\)"
+    r"|\[updated\] (?:[0-9a-f]{7,8}\.\.\.[0-9a-f]{7,8} )?refs/[^\r\n]+"
+    r"|\* \[new\] [0-9a-f]{7,8} refs/[^\r\n]+"
+    r"|remote: https[:]//\[redacted\]@example\.invalid/repo\?(?:token|%74oken)=\[redacted\](?: \[redacted\]){0,3}"
+)
 # Only these deliberate negative cases may produce provider diagnostics.
 EXPECTED = {
     "nonrepo": (r"WARNING: GitPlugin: No existing Git repository was found\. Initialize one before enabling version control\.",),
@@ -54,7 +74,11 @@ def classify(output: str, exit_code: int, *, identity: str, result_passed: bool,
         not timed_out and identity == OFFICIAL_26_3 and result_passed
         and (providers_freed is None or providers_freed is True)
     )
-    known_crash = (
+    bannerless_crash = (
+        eligible and exit_code in {0xC0000005, -1073741819} and provider_active
+        and marker >= 0 and crash is None and providers_freed is True
+    )
+    known_crash = bannerless_crash or (
         eligible and exit_code in CRASH_CODES and provider_active and marker >= 0
         and crash is not None and marker < crash.start()
     )
@@ -66,7 +90,13 @@ def classify(output: str, exit_code: int, *, identity: str, result_passed: bool,
         eligible and import_only and not provider_active and exit_code in CRASH_CODES
         and PROVIDER_ACTIVITY.search(output) is None
     )
-    engine_exit = known_crash or known_leak or known_import_crash
+    known_import_leak = (
+        eligible and import_only and not provider_active and exit_code == 0 and crash is None
+        and PROVIDER_ACTIVITY.search(output) is None
+        and any(LEAK.fullmatch(line.strip()) for line in output.splitlines())
+    )
+    strict_lines = bannerless_crash or known_import_leak
+    engine_exit = known_crash or known_leak or known_import_crash or known_import_leak
     failures: list[str] = []
     if timed_out:
         failures.append("engine timed out")
@@ -86,7 +116,12 @@ def classify(output: str, exit_code: int, *, identity: str, result_passed: bool,
                 failures.append("unexpected crash banner")
             continue
         if line.startswith("at:"):
-            if not allowed_context:
+            engine_context = re.fullmatch(
+                r"at: (?:_free_rids \(servers/rendering/renderer_canvas_cull\.cpp[:]\d+\)"
+                r"|cleanup \(core/object/object\.cpp[:]\d+\)"
+                r"|push_(?:warning|error) \(core/variant/variant_utility\.cpp[:]\d+\))", line
+            )
+            if not allowed_context or (strict_lines and engine_context is None):
                 failures.append("unexpected diagnostic context")
             continue
         if DIAGNOSTIC.search(line):
@@ -95,6 +130,16 @@ def classify(output: str, exit_code: int, *, identity: str, result_passed: bool,
             if not allowed_context:
                 failures.append("unexpected diagnostic: " + line)
         elif line:
+            if strict_lines:
+                if allowed_context and (
+                    line == "GDScript backtrace (most recent call first):"
+                    or re.fullmatch(r"\[\d+\] \w+ \(res[:]//(?:provider_scenario\.gd|addons/fixture-driver/driver\.gd)[:]\d+\)", line)
+                ):
+                    continue
+                if not (ENGINE_OUTPUT.fullmatch(line) or (
+                    provider_active and PROVIDER_OUTPUT.fullmatch(line)
+                )):
+                    failures.append("unexpected output: " + line)
             allowed_context = False
     outcome = "passed"
     if known_crash:
@@ -103,6 +148,8 @@ def classify(output: str, exit_code: int, *, identity: str, result_passed: bool,
         outcome = "known_engine_shutdown_leak"
     elif known_import_crash:
         outcome = "known_engine_import_crash"
+    elif known_import_leak:
+        outcome = "known_engine_import_leak"
     return {
         "outcome": "failed" if failures else outcome,
         "passed": not failures,

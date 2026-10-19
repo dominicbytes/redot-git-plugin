@@ -47,6 +47,126 @@ class DiagnosticsTests(unittest.TestCase):
                                           "26.2.stable.official.4f5b14aba")
                 self.assertEqual(report["passed"], accepted)
 
+    def test_bannerless_shutdown_crash_requires_exact_access_violation(self):
+        text = "GitPlugin: Shut down\n================================================================"
+        for code in (0xC0000005, -1073741819):
+            with self.subTest(code=code):
+                result = self.classify(text, code, providers_freed=True)
+                self.assertEqual(result["outcome"], "known_engine_shutdown_crash")
+        for code in (0, 1, 139, -11, 0xC0000409):
+            with self.subTest(code=code):
+                self.assertNotEqual(self.classify(text, code, providers_freed=True)["outcome"],
+                                    "known_engine_shutdown_crash")
+
+    def test_new_exceptions_allow_normal_editor_output(self):
+        output = (
+            "Redot Engine v26.3.stable.official.85e520394 (2026-10-14 23:26:43 UTC) - https:" "//redotengine.org\n"
+            "[   0% ] first_scan_filesystem | Started Project initialization (5 steps)\n"
+            "[ DONE ] first_scan_filesystem\n"
+            "[   0% ] update_scripts_classes | \n"
+            "[ DONE ] loading_editor_layout\n"
+        )
+        provider_output = (
+            "Found a repository at <fixture project>\nSelected repository path: <fixture project>\n"
+            "GitPlugin: Loaded system CA certificates\nGitPlugin: Performing fetch from origin\n"
+            "remote: Counting objects 1\nremote: Compressing objects: 100% (3/3)\n"
+            "Received 1/3 objects (1) in 172 bytes\nResolving deltas 0/0\n"
+            "Writing Objects: 100% (3/3, 0 bytes done.)\n"
+            "* [new] 0123456 refs/remotes/origin/main\n"
+            "[updated] 0123456...abcdef0 refs/remotes/origin/main\n[updated] refs/heads/main\n"
+            "GitPlugin: Fetch ended\nGitPlugin: Shut down\n"
+            'REDOT_GIT_PROVIDER_TEST={"passed":true,"providers_freed":true}\n'
+        )
+        self.assertEqual(self.classify(output + provider_output, 0xC0000005,
+                                       providers_freed=True)["outcome"], "known_engine_shutdown_crash")
+        leak = "WARNING: ObjectDB instances leaked at exit (run with --verbose for details)."
+        self.assertEqual(self.classify(output + leak, import_only=True,
+                                       provider_active=False)["outcome"], "known_engine_import_leak")
+
+    def test_bannerless_shutdown_crash_requires_all_success_evidence(self):
+        text = "GitPlugin: Shut down"
+        for options in (
+            {"identity": "26.2.stable.official.4f5b14aba"},
+            {"identity": "26.3.stable.custom_build.85e520394"},
+            {"result_passed": False}, {"providers_freed": None},
+            {"providers_freed": False}, {"providers_freed": "true"},
+            {"timed_out": True}, {"provider_active": False},
+        ):
+            with self.subTest(options=options):
+                self.assertFalse(self.classify(text, 0xC0000005,
+                                               **({"providers_freed": True} | options))["passed"])
+        self.assertFalse(self.classify("Import complete", 0xC0000005, providers_freed=True)["passed"])
+
+    def test_bannerless_shutdown_crash_rejects_unknown_lines(self):
+        for line in (
+            "ERROR: provider failed", "WARNING: unknown warning", "unexplained output",
+            "[1] libgit_plugin.windows.editor.x86_64.dll!git_plugin_init",
+            "GitPlugin: unexpected failure", "   at: cleanup (core/object/object.cpp:1)",
+        ):
+            with self.subTest(line=line):
+                text = "GitPlugin: Shut down\n" + line
+                self.assertFalse(self.classify(text, 0xC0000005, providers_freed=True)["passed"])
+
+    def test_new_exceptions_reject_unknown_leak_context(self):
+        leak = "WARNING: ObjectDB instances leaked at exit (run with --verbose for details)."
+        for context in ("at: check_errors (src/git_plugin.cpp:1)", "at: unexpected (core/unknown.cpp:1)"):
+            with self.subTest(context=context):
+                text = leak + "\n" + context
+                self.assertFalse(self.classify("GitPlugin: Shut down\n" + text, 0xC0000005,
+                                               providers_freed=True)["passed"])
+                self.assertFalse(self.classify(text, import_only=True, provider_active=False)["passed"])
+
+    def test_pure_import_exit_zero_leaks_are_classified(self):
+        for line in (
+            "ERROR: 1 RID allocations of type 'N6RendererSceneCull8InstanceE' were leaked at exit.",
+            'WARNING: 1 RIDs of type "Canvas" were leaked.',
+            "WARNING: ObjectDB instances leaked at exit (run with --verbose for details).",
+        ):
+            with self.subTest(line=line):
+                process = subprocess.CompletedProcess(
+                    ["engine", "--editor", "--import"], 0,
+                    line + "\n   at: cleanup (core/object/object.cpp:1)", "")
+                result = check_process(process, identity=OFFICIAL_26_3)
+                self.assertEqual(result["outcome"], "known_engine_import_leak")
+                self.assertTrue(result["passed"])
+        self.assertEqual(self.classify("", import_only=True, provider_active=False)["outcome"], "passed")
+
+    def test_import_leak_requires_exact_identity_and_import_success(self):
+        text = "WARNING: ObjectDB instances leaked at exit (run with --verbose for details)."
+        for options in (
+            {"identity": "26.2.stable.official.4f5b14aba"},
+            {"identity": "26.3.stable.custom_build.85e520394"},
+            {"result_passed": False}, {"providers_freed": False},
+            {"timed_out": True}, {"provider_active": True}, {"import_only": False},
+        ):
+            with self.subTest(options=options):
+                self.assertFalse(self.classify(text, **({"import_only": True, "provider_active": False} | options))["passed"])
+        for code in (1, 2, 0xC0000409):
+            with self.subTest(code=code):
+                self.assertFalse(self.classify(text, code, import_only=True, provider_active=False)["passed"])
+        for arguments in (
+            ["engine", "--editor"],
+            ["engine", "--editor", "--import", "--script", "scenario.gd"],
+            ["engine", "--editor", "--import", "--", "nonrepo"],
+        ):
+            with self.subTest(arguments=arguments):
+                process = subprocess.CompletedProcess(arguments, 0, text, "")
+                self.assertFalse(check_process(process, identity=OFFICIAL_26_3)["passed"])
+
+    def test_import_leak_rejects_activity_frames_and_unknown_lines(self):
+        leak = "WARNING: ObjectDB instances leaked at exit (run with --verbose for details)."
+        for line in (
+            "GitPlugin: Loaded system CA certificates", "Found a repository at <fixture project>",
+            "Selected repository path: <fixture project>", "GitPlugin: Shut down",
+            "[1] libgit_plugin.windows.editor.x86_64.dll!git_plugin_init",
+            "[1] GitPlugin::_initialize", "   at: check_errors (src/git_plugin.cpp:1)",
+            "[1] credentials_cb (src/git_callbacks.cpp:1)", "ERROR: provider failed",
+            "WARNING: unknown warning", "unexplained output", "CrashHandler: Program crashed",
+        ):
+            with self.subTest(line=line):
+                self.assertFalse(self.classify(leak + "\n" + line,
+                                               import_only=True, provider_active=False)["passed"])
+
     def test_plugin_crash_before_marker_fails(self):
         result = self.classify("CrashHandler: Program crashed\nGitPlugin: Shut down", 139)
         self.assertEqual(result["outcome"], "failed")

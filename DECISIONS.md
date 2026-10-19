@@ -142,16 +142,25 @@
 - Decision: Report `known_engine_shutdown_crash` only for exact identity
   `26.3.stable.official.85e520394`, a known access-violation exit, passing
   scenario result, and successful provider shutdown marker before the crash
-  banner. Report `known_engine_shutdown_leak` separately for exit zero with
+  banner. Without a banner, require exactly the Windows access-violation
+  status (0xC0000005, signed or unsigned), explicit confirmation that every
+  provider instance was freed, and only allowlisted output lines. Report
+  `known_engine_shutdown_leak` separately for exit zero with
   the same identity, passing result, completed shutdown, and only documented
   RID/ObjectDB exit leaks. Require freed instances when the fixture reports
-  their lifetime.
+  their lifetime. Successful shutdown emits the same marker when
+  initialization was refused and there is no libgit2 state to release.
+  The non-repository fixture still calls shutdown and frees its provider.
 - Context: The official editor reproduces these shutdown defects without the
   plugin; a patched 26.3 editor supplies the clean runtime cross-check.
 - Decision: A verified editor-only `--import` command may report
   `known_engine_import_crash` for the same exact identity and crash exit only
-  when no provider initialization, activity, or plugin frame appears. A real
-  scenario without completed provider shutdown remains fatal.
+  when no provider initialization, activity, or plugin frame appears.
+  Under those same constraints, exit zero with only allowlisted output and
+  RID/ObjectDB leak diagnostics is `known_engine_import_leak`; no shutdown
+  marker is required because import never initialized the provider. Clean
+  imports remain clean passes. A real scenario without completed provider
+  shutdown remains fatal.
 - Consequence: Timeouts, missing/failed results, load failures, unknown
   diagnostics, unfreed providers, and other engine identities remain fatal.
   Keep all environmental categories separate from clean passes. Remove the
