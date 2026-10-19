@@ -93,7 +93,9 @@ cd redot-git-plugin
 
 Required tools are Python 3.9 or newer, SCons 4.10.1, CMake, Perl, NASM, and a
 platform C/C++ toolchain. On Windows, use an x64 MSVC developer shell with
-`nmake` available.
+`nmake` available and native Windows Perl, such as Strawberry Perl, ahead
+of Git for Windows/MSYS or Cygwin Perl on `PATH`. OpenSSL with MSVC requires
+Perl to report `MSWin32`.
 
 Production examples:
 
