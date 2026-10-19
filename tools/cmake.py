@@ -106,9 +106,12 @@ def cmake_default_flags(env, languages=None):
     if env.get("is_msvc", False):
         # Preserve the quotes as part of CMAKE_<LANG>_FLAGS so NMake does not
         # split a mapped source root that contains spaces.
-        reproducible_flags = '/experimental:deterministic /pathmap:\\"{}\\"=.'.format(source_root.replace("\\", "/"))
+        reproducible_flags = '/experimental:deterministic /pathmap:\\"{}\\"=.'.format(source_root)
     else:
-        reproducible_flags = "-ffile-prefix-map={}=. -fdebug-prefix-map={}=.".format(source_root, source_root)
+        reproducible_flags = " ".join(shlex.quote(flag) for flag in [
+            "-ffile-prefix-map={}=.".format(source_root),
+            "-fdebug-prefix-map={}=.".format(source_root),
+        ])
 
     for language in languages:
         key = "CMAKE_{}_FLAGS".format(language)

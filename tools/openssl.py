@@ -1,9 +1,11 @@
 import os
+import subprocess
 import sys
 
 import SCons.Action
 import SCons.Builder
 import SCons.Util
+from SCons.Errors import UserError
 from SCons.Defaults import Mkdir
 from SCons.Variables import PathVariable
 
@@ -268,6 +270,18 @@ def generate(env):
     # We will need to build our own OpenSSL library.
     env["SSL_EXTERNAL"] = False
 
+    env["PERL"] = env.get("PERL", "perl")
+    if env.get("is_msvc", False):
+        try:
+            perl = subprocess.run(
+                [env.subst("$PERL"), "-e", "print $^O"],
+                env=env["ENV"], capture_output=True, text=True, check=False, timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            raise UserError("MSVC OpenSSL builds require native Windows Perl (Strawberry Perl) on PATH.") from None
+        if perl.returncode != 0 or perl.stdout.strip() != "MSWin32":
+            raise UserError("MSVC OpenSSL builds require native Windows Perl (Strawberry Perl); MSYS/Cygwin Perl is unsupported.")
+
     # Android needs the NDK in ENV, and proper PATH setup.
     if env["platform"] == "android" and env["ENV"].get("ANDROID_NDK_ROOT", "") == "":
         cc_path = os.path.dirname(env["CC"])
@@ -292,7 +306,7 @@ def generate(env):
         # Keep this in CL rather than OpenSSL's Configure arguments. MSVC still
         # maps __FILE__, while OpenSSL's generated compiler-flags string stays
         # independent of the build root.
-        compiler_flags = '/experimental:deterministic "/pathmap:{}=."'.format(source_root.replace("\\", "/"))
+        compiler_flags = '/experimental:deterministic "/pathmap:{}=."'.format(source_root)
         env["ENV"]["CL"] = "{} {}".format(env["ENV"].get("CL", ""), compiler_flags).strip()
         env["ENV"]["TERM"] = env["ENV"].get("TERM") or "vt100"
         reproducible_flags = []
@@ -308,7 +322,6 @@ def generate(env):
         openssl_dir = "/redot-git-plugin/ssl"
 
     # Configure action
-    env["PERL"] = env.get("PERL", "perl")
     env["_ssl_configure_args"] = ssl_configure_args
     env["SSLPLATFORMCONFIG"] = "${_ssl_configure_args(__env__)}"
     env["SSLCONFFLAGS"] = reproducible_flags

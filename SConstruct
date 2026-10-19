@@ -22,16 +22,32 @@ opts.Update(env)
 test_harness = env["test_harness"]
 plugin_paths = {
     "target_name": env["target_name"],
-    "target_path": env["target_path"],
+    "target_path": env.Dir(env["target_path"]).abspath,
 }
 for plugin_option in ["target_name", "target_path", "test_harness"]:
     ARGUMENTS.pop(plugin_option, None)
 
 if ARGUMENTS.get("custom_api_file", "") != "":
-    ARGUMENTS["custom_api_file"] = "../" + ARGUMENTS["custom_api_file"]
+    ARGUMENTS["custom_api_file"] = env.File(ARGUMENTS["custom_api_file"]).abspath
 
 ARGUMENTS["target"] = "editor"
-env = SConscript("godot-cpp/SConstruct").Clone()
+env = SConscript("godot-cpp/SConstruct")
+
+# Update the binding builders' environment before cloning it for the plugin.
+source_root = env.Dir("#").abspath
+if env.get("is_msvc", False):
+    env.AppendUnique(CCFLAGS=[
+        "/experimental:deterministic",
+        "/pathmap:{}=.".format(source_root),
+        "/d1trimfile:{}".format(source_root),
+    ])
+    env.AppendUnique(LINKFLAGS=["/Brepro"])
+else:
+    env.AppendUnique(CCFLAGS=[
+        "-ffile-prefix-map={}=.".format(source_root),
+        "-fdebug-prefix-map={}=.".format(source_root),
+    ])
+env = env.Clone()
 env.__class__.msvc = env.get("is_msvc", False)
 
 # Force linking with LTO on windows MSVC, silence the linker complaining that libgit uses LTO but we are not linking with it.
