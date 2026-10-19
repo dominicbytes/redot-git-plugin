@@ -42,6 +42,10 @@ func _run() -> void:
 		OS.get_environment("REDOT_GIT_PRIVATE_KEY"),
 		OS.get_environment("REDOT_GIT_PASSPHRASE"),
 	)
+	var negative_case := OS.get_environment("REDOT_GIT_NEGATIVE_CASE")
+	if not negative_case.is_empty():
+		_run_negative(provider, result, remote_url, negative_case)
+		return
 	provider.call("test_create_remote", "origin", remote_url)
 	result["remotes"] = provider.call("test_get_remotes")
 	provider.call("test_pull", "origin")
@@ -67,6 +71,31 @@ func _run() -> void:
 		and result.shutdown
 		and result.credentials_empty
 	)
+	_finish(result, provider)
+
+
+func _run_negative(provider: Object, result: Dictionary, remote_url: String, negative_case: String) -> void:
+	var before: Array = provider.call("test_get_previous_commits", 1)
+	var remote := "negative-" + negative_case
+	provider.call("test_create_remote", remote, remote_url)
+	result["negative_case"] = negative_case
+	if negative_case == "redirect":
+		provider.call("test_fetch", remote)
+		provider.call("test_pull", remote)
+		provider.call("test_push", remote, false)
+	else:
+		var file := FileAccess.open("res://rejected.txt", FileAccess.WRITE)
+		file.store_string("rejected by receive hook\n")
+		file.close()
+		provider.call("test_stage_file", "rejected.txt")
+		provider.call("test_commit", "Rejected transport commit")
+		provider.call("test_push", remote, false)
+	var after: Array = provider.call("test_get_previous_commits", 1)
+	result["shutdown"] = provider.call("test_shutdown")
+	result["credentials_empty"] = provider.call("test_credentials_empty")
+	result["passed"] = result.initialize and result.ca_configured and result.shutdown and result.credentials_empty and not after.is_empty()
+	if negative_case == "redirect":
+		result["passed"] = result.passed and before == after
 	_finish(result, provider)
 
 

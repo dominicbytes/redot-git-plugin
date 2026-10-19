@@ -76,6 +76,14 @@ VCS class surface, including the same 23 required methods.
 | libssh2 | 1.11.2_DEV (master, 2026-10-16) | `3209951db4e47ef902db047d12f9f464f835c27e` | BSD-3-Clause |
 | OpenSSL | 3.6.5 | `c8bd5a57108599ac650bbae77fcabe3109dab2e8` | Apache-2.0 for current source, plus bundled legacy notices |
 
+The libgit2 build additionally applies
+`thirdparty/git2/patches/0001-restrict-redirect-origin.patch` to a generated
+build copy, preserving the locked submodule. When off-site redirects are
+forbidden, scheme, host and port must all remain unchanged, preventing
+cached HTTP credentials from reaching another port. Patch application is
+idempotent and fails the build on drift. This security fix should be reported
+upstream and removed after a pinned upstream release includes it. See ADR-0016.
+
 libgit2 1.9.7 fixes SSH repository-path command injection
 ([CVE-2026-5917](https://github.com/libgit2/libgit2/blob/49e408b3208bc3093757a1c2db938d3590f3f412/docs/changelog.md)).
 

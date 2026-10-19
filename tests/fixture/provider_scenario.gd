@@ -39,6 +39,8 @@ func _run() -> void:
 			result = _run_resolution()
 		"security":
 			result = _run_security()
+		"security_authority", "security_uri_output", "security_ambiguous_query", "security_ambiguous_fragment", "security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback", "security_redirect_cross", "security_redirect_same":
+			result = _run_security_regression(scenario)
 		"edge":
 			result = _run_edge_matrix()
 		"detached":
@@ -249,8 +251,8 @@ func _run_security() -> Dictionary:
 		return {"scenario": "security", "passed": false, "reason": "GitPlugin was not instantiable"}
 	var password := "SENTINEL_" + "PASSWORD_42"
 	var passphrase := "SENTINEL_" + "PASSPHRASE_42"
-	var public_key := "C:/sentinel/" + "PUBLIC_KEY_42.pub"
-	var private_key := "C:/sentinel/" + "PRIVATE_KEY_42"
+	var public_key := "sentinel/" + "PUBLIC_KEY_42.pub"
+	var private_key := "sentinel/" + "PRIVATE_KEY_42"
 	var username := "sentinel-" + "user-42"
 	var url_secret := "SENTINEL_" + "URL_SECRET_42"
 	var query_secret := "SENTINEL_" + "QUERY_SECRET_42"
@@ -259,25 +261,92 @@ func _run_security() -> Dictionary:
 	provider.call("test_set_credentials", username, password, public_key, private_key, passphrase)
 	var sensitive_text := "https://" + username + ":" + password + "@example.invalid/repo?token=" + query_secret + " " + public_key + " " + private_key + " " + passphrase
 	result["sanitized"] = provider.call("test_sanitize_output", sensitive_text)
-	var credential_url := "https://" + username + ":" + url_secret + "@example.invalid/repo?token=" + query_secret
-	provider.call("test_create_remote", "credential-url", credential_url)
-	provider.call("test_create_remote", "scp-credential-url", username + "@example.invalid:repository.git")
+	var rejected_urls: Array[String] = [
+		"https://user@example.invalid/repo",
+		"https://user:" + url_secret + "@example.invalid/repo",
+		"ssh://user:" + url_secret + "@example.invalid/repo",
+		"ssh://user:@example.invalid/repo",
+		"user:" + url_secret + "@example.invalid:repo.git",
+	]
+	for query_name: String in ["%74oken", "api_key", "client_secret", "APIKEY", "private_token", "sig", "signature", "access_token", "key", "password", "passwd", "pass", "secret", "auth"]:
+		rejected_urls.append("https://example.invalid/repo?" + query_name + "=" + query_secret)
+		var sanitized: String = provider.call("test_sanitize_output", "https://example.invalid/repo?" + query_name + "=" + query_secret)
+		result["sanitized"] += " " + sanitized
+	for index: int in range(rejected_urls.size()):
+		provider.call("test_create_remote", "blocked-" + str(index), rejected_urls[index])
+	provider.call("test_create_remote", "scp-username", "git@example.invalid:owner/repo.git")
+	provider.call("test_create_remote", "ssh-username", "ssh://git@example.invalid/owner/repo.git")
 	result["remotes"] = provider.call("test_get_remotes")
-	provider.call("test_create_remote", "invalid", "https://127.0.0.1:1/repository.git")
-	provider.call("test_fetch", "invalid")
-	provider.call("test_remove_remote", "invalid")
+	var urls_rejected := true
+	for index: int in range(rejected_urls.size()):
+		urls_rejected = urls_rejected and not result.remotes.has("blocked-" + str(index))
+	result["url_policy"] = urls_rejected and result.remotes.has("scp-username") and result.remotes.has("ssh-username")
+	result["callback_policy"] = false
+	result["effective_urls"] = false
+	result["push_rejection"] = false
+	if provider.has_method("test_credential_requests"):
+		result["effective_urls"] = _security_effective_urls(provider)
+		result["callback_policy"] = _security_credentials(provider, username, password)
+		provider.call("test_set_credentials", username, password, public_key, private_key, passphrase)
+		var packets: Array[String] = []
+		for index: int in range(sensitive_text.length()):
+			packets.append(sensitive_text.substr(index, 1))
+		packets.append("\n")
+		# The final unterminated line is flushed by the operation destructor.
+		packets.append("https://user:UNCONFIGURED_" + "SPLIT_SECRET_42@example.invalid/repo?%74oken=")
+		packets.append("UNCONFIGURED_" + "QUERY_SECRET_42")
+		provider.call("test_progress_packets", packets)
+		result["push_rejection"] = provider.call("test_push_rejection", "hook declined " + sensitive_text)
+	# Exercise real local push status failures as well as the callback directly.
+	provider.call("test_push", "locked-remote", false)
+	# Remote names and libgit2 errors must use the same sanitizer.
+	provider.call("test_fetch", password)
+	provider.call("test_pull", passphrase)
+	provider.call("test_push", private_key, false)
 	result["shutdown"] = provider.call("test_shutdown")
 	result["credentials_empty"] = provider.call("test_credentials_empty")
 	result["passed"] = (
 		result.initialize
-		and not result.remotes.has("credential-url")
-		and not result.remotes.has("scp-credential-url")
+		and result.url_policy
+		and result.callback_policy
+		and result.effective_urls
+		and result.push_rejection
 		and result.sanitized.contains("[redacted]")
 		and not result.sanitized.contains("SENTINEL_")
 		and result.shutdown
 		and result.credentials_empty
 	)
 	return result
+
+
+func _security_effective_urls(provider: Object) -> bool:
+	var passed := true
+	for remote: String in ["unsafe-fetch", "rewritten-fetch", "rewritten-push", "unsafe-push"]:
+		var push := remote.ends_with("push")
+		var allowed: bool = provider.call("test_remote_url_allowed", remote, push)
+		passed = passed and not allowed
+		if push:
+			# Safe fetch URL is unaffected by an unsafe push URL.
+			passed = passed and provider.call("test_remote_url_allowed", remote, false)
+			provider.call("test_push", remote, false)
+		else:
+			provider.call("test_fetch", remote)
+			provider.call("test_pull", remote)
+	provider.call("test_create_remote", "rewritten-create", "fixture-fetch:other.git")
+	var remotes: Array = provider.call("test_get_remotes")
+	return passed and not remotes.has("rewritten-create")
+
+
+func _security_credentials(provider: Object, username: String, password: String) -> bool:
+	provider.call("test_set_credentials", username, password, "", "", "")
+	var origin := "https://example.invalid/repo"
+	var same := "https://EXAMPLE.invalid:443/other"
+	var attempts: Array = provider.call("test_credential_requests", origin, [same, same, same, same, same], 1, "")
+	var origins: Array = provider.call("test_credential_requests", origin, ["https://other.invalid/repo", "http://example.invalid/repo", "https://example.invalid:444/repo", "file:///repo", "invalid"], 1, "")
+	var agent: Array = provider.call("test_credential_requests", "git@example.invalid:owner/repo.git", ["ssh://git@example.invalid:22/repo", "ssh://git@example.invalid/repo"], 2, "git")
+	var ssh_username: Array = provider.call("test_credential_requests", "ssh://git@example.invalid/repo", ["git@example.invalid:owner/repo.git"], 32, "git")
+	var fresh: Array = provider.call("test_credential_requests", origin, [same], 1, "")
+	return attempts == [true, false, false, false, false] and origins == [false, false, false, false, false] and agent == [true, false] and ssh_username == [true] and fresh == [true]
 
 
 func _run_edge_matrix() -> Dictionary:
@@ -590,4 +659,129 @@ func _run_local_regression(scenario: String) -> Dictionary:
 	result["behavior_passed"] = ok
 	result["shutdown"] = provider.call("test_shutdown")
 	result["passed"] = ok and result.shutdown
+	return result
+
+
+func _run_security_regression(scenario: String) -> Dictionary:
+	var provider := _new_provider()
+	var result := {"scenario": scenario, "passed": false}
+	if provider == null:
+		return result
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	provider.call("test_set_credentials", "fixture", "fixture-password", "", "", "")
+	var passed: bool = result.initialize
+	match scenario:
+		"security_redirect_cross", "security_redirect_same":
+			var config: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://redirect-config.json"))
+			provider.call("test_set_credentials", "fixture", "redirect-password", "", "", "")
+			provider.call("test_create_remote", "redirect-loopback", config.url)
+			provider.call("test_fetch", "redirect-loopback")
+		"security_ambiguous_query", "security_ambiguous_fragment":
+			var config: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://redirect-config.json"))
+			provider.call("test_create_remote", "ambiguous-create", config.url)
+			passed = not provider.call("test_get_remotes").has("ambiguous-create") and passed
+			passed = not provider.call("test_remote_url_allowed", "ambiguous-effective", false) and passed
+			passed = not provider.call("test_remote_url_allowed", "ambiguous-effective", true) and passed
+			provider.call("test_fetch", "ambiguous-effective")
+			provider.call("test_push", "ambiguous-effective", false)
+		"security_authority":
+			var checks: Array = []
+			for delimiter: String in ["?", "#"]:
+				for scheme: String in ["http", "https", "ssh"]:
+					var userinfo := "user:URL_SECRET" + delimiter + "x"
+					var url := scheme + "://" + userinfo + "@example.invalid/repo"
+					var name := "ambiguous-" + str(checks.size())
+					provider.call("test_create_remote", name, url)
+					checks.append(not provider.call("test_get_remotes").has(name))
+					checks.append(provider.call("test_sanitize_output", url) == scheme + "://[redacted]@example.invalid/repo")
+					checks.append(provider.call("test_credential_requests", scheme + "://example.invalid/repo", [url], 1, "") == [false])
+				var http_user := "https://user" + delimiter + "x@example.invalid/repo"
+				provider.call("test_create_remote", "http-user-" + str(checks.size()), http_user)
+				checks.append(provider.call("test_sanitize_output", http_user) == "https://[redacted]@example.invalid/repo")
+				checks.append(not provider.call("test_get_remotes").has("http-user-" + str(checks.size() - 1)))
+				var ssh_empty := "ssh://user" + delimiter + "x:@example.invalid/repo"
+				provider.call("test_create_remote", "ssh-empty-" + str(checks.size()), ssh_empty)
+				checks.append(not provider.call("test_get_remotes").has("ssh-empty-" + str(checks.size())))
+				checks.append(provider.call("test_sanitize_output", ssh_empty) == "ssh://[redacted]@example.invalid/repo")
+			result["checks"] = checks
+			passed = not checks.has(false) and passed
+		"security_uri_output":
+			var cases: Array = [
+				["https://a:ONE_SECRET@host/r,https://b:TWO_SECRET@host/r", "https://[redacted]@host/r,https://[redacted]@host/r"],
+				["https://a:ONE_SECRET@host/r;https://b:TWO_SECRET@host/r", "https://[redacted]@host/r;https://[redacted]@host/r"],
+				["https://host/r,https://b:TWO_SECRET@host/r", "https://host/r,https://[redacted]@host/r"],
+				["https://host/repo?redirect=https://u:URL_SECRET@host/b", "https://host/repo?redirect=https://[redacted]@host/b"],
+			]
+			var checks: Array = []
+			for pair: Array in cases:
+				checks.append(provider.call("test_sanitize_output", pair[0]) == pair[1])
+			# Many URI occurrences in one token must complete without rescanning suffixes.
+			checks.append(provider.call("test_sanitize_output", "https://u:URL_SECRET@host/r,".repeat(2000)) == "https://[redacted]@host/r,".repeat(2000))
+			result["checks"] = checks
+			passed = not checks.has(false) and passed
+		"security_urls":
+			var allowed: Array[String] = [
+				"ssh://git%40team@example.invalid/repo", "ssh://git@team@example.invalid/repo",
+				"ssh://git%3Ateam@example.invalid/repo", "example.invalid:repo@v1.git",
+				"[2001:db8::1]:repo@v1.git", "./local:repo@v1.git",
+				"./local/repo?token=snapshot", "example.invalid:repo?token=snapshot",
+				"ssh://example.invalid/repo?token=snapshot", "file:///neutral/repo?token=snapshot",
+			]
+			for index: int in range(allowed.size()):
+				var name := "allowed-" + str(index)
+				provider.call("test_create_remote", name, allowed[index])
+				passed = provider.call("test_get_remotes").has(name) and passed
+		"security_origins":
+			var pairs: Array = [
+				["https://[2001:db8::1]/repo", "https://2001:db8::1/repo"],
+				["https://[2001:db8::1]:444/repo", "https://2001:db8::1:444/repo"],
+				["https://%65xample.invalid/repo", "https://example.invalid/repo"],
+				["https://example.invalid:/repo", "https://example.invalid:443/repo"],
+				["https://example.invalid./repo", "HTTPS://EXAMPLE.invalid:0443/repo"],
+				["example.invalid:repo with spaces", "ssh://example.invalid/repo"],
+			]
+			var checks: Array = []
+			for pair: Array in pairs:
+				var actual: Array = provider.call("test_credential_requests", pair[0], [pair[1]], 1, "")
+				checks.append(actual == [true])
+				passed = actual == [true] and passed
+			for changed: String in ["http://[2001:db8::1]/repo", "https://[2001:db8::2]/repo", "https://[2001:db8::1]:444/repo"]:
+				passed = provider.call("test_credential_requests", "https://[2001:db8::1]/repo", [changed], 1, "") == [false] and passed
+			result["checks"] = checks
+		"security_overlap":
+			provider.call("test_set_credentials", "abc", "abcdefSECRET", "", "", "")
+			passed = provider.call("test_sanitize_output", "abcdefSECRET abc abcdefSECRET") == "[redacted] [redacted] [redacted]" and passed
+			provider.call("test_set_credentials", "aba", "bab", "", "", "")
+			passed = provider.call("test_sanitize_output", "ababa") == "[redacted]" and passed
+		"security_long_output":
+			for length: int in [64, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]:
+				var text := "x".repeat(length)
+				passed = provider.call("test_sanitize_output", text) == text and passed
+				provider.call("test_progress_packets", [text, "\n"])
+				var sensitive := "ssh://" + text + ":LONG_SECRET@host/repo?token=QUERY_SECRET"
+				var safe: String = provider.call("test_sanitize_output", sensitive)
+				passed = not safe.contains("LONG_SECRET") and not safe.contains("QUERY_SECRET") and passed
+				provider.call("test_progress_packets", [sensitive, "\n"])
+			var packets: Array[String] = []
+			for index: int in range(1024):
+				packets.append("x".repeat(64))
+			packets.append("fixture-password\n")
+			provider.call("test_progress_packets", packets)
+			packets.clear()
+			for index: int in range(1024):
+				packets.append("x".repeat(60))
+			packets.append("fixture-")
+			packets.append("password\n")
+			provider.call("test_progress_packets", packets)
+		"security_cr":
+			provider.call("test_progress_packets", ["CR_ONE\r", "\nCR_TWO\rCR_", "THREE\nCR_TAIL"])
+			var packets: Array[String] = []
+			for index: int in range(1100):
+				packets.append("CR_TICK " + "x".repeat(64) + "\r")
+			provider.call("test_progress_packets", packets)
+		"security_fallback":
+			var origin := "ssh://git@example.invalid/repo"
+			var attempts: Array = provider.call("test_credential_requests", origin, [origin, origin, origin, origin], 3, "git")
+			passed = attempts == [true, true, false, false] and passed
+	result["passed"] = passed
 	return result

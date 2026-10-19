@@ -180,9 +180,12 @@ def run_provider(redot: Path, project: Path, env: dict[str, str]) -> dict[str, o
     if result is None:
         result = {"passed": False}
     identity = engine_identity(redot, project)
+    diagnostic_scenario = {
+        "redirect": "transport_redirect", "hook-rejection": "transport_hook_rejection",
+    }.get(result.get("negative_case"), "")
     diagnostics = check_process(process, identity=identity,
                                 result_passed=result.get("passed") is True, provider_active=True,
-                                providers_freed=result.get("providers_freed"))
+                                providers_freed=result.get("providers_freed"), scenario=diagnostic_scenario)
     return {
         "redot_version": identity,
         "exit_code": process.returncode,
@@ -201,6 +204,44 @@ def scan_for_sentinels(project: Path, output: str, sentinels: tuple[str, ...]) -
             matches.extend(f"{path.relative_to(project).as_posix()}:sentinel" for sentinel in sentinels if sentinel.encode() in data)
     matches.extend("output:sentinel" for sentinel in sentinels if sentinel in output)
     return matches
+
+
+
+def run_negative_transports(
+    redot: Path, project: Path, env: dict[str, str], container: str, fixtures: Path,
+    git: str, peer: Path, https_options: list[str], sentinels: tuple[str, ...],
+) -> list[dict[str, object]]:
+    reports = []
+    redirect_env = env | {
+        "REDOT_GIT_NEGATIVE_CASE": "redirect",
+        "REDOT_GIT_REMOTE_URL": env["REDOT_GIT_REMOTE_URL"].replace("/git/", "/redirect/"),
+    }
+    redirect = run_provider(redot, project, redirect_env)
+    target_log = fixtures / "redirect-access.log"
+    no_target_requests = target_log.is_file() and not target_log.read_text(encoding="utf-8").strip()
+    redirect["verification"] = {
+        "redirect_target_unvisited": no_target_requests,
+        "success_marker_absent": all(marker not in redirect["output"] for marker in ("Fetch ended", "Pull ended", "Push ended")),
+        "sentinel_matches": scan_for_sentinels(project, redirect["output"], sentinels),
+    }
+    redirect["passed"] = redirect["passed"] and no_target_requests and redirect["verification"]["success_marker_absent"] and not redirect["verification"]["sentinel_matches"]
+    reports.append(redirect)
+    checked([git, *https_options, "fetch", "origin"], peer)
+    before = checked([git, "rev-parse", "origin/main"], peer)
+    hook = "#!/bin/sh\necho 'fixture receive hook declined' >&2\nexit 1\n"
+    checked(["docker", "exec", container, "sh", "-c", 'printf "%s" "$1" > /srv/git/https.git/hooks/pre-receive; chmod 0755 /srv/git/https.git/hooks/pre-receive', "fixture-hook", hook], fixtures)
+    rejection = run_provider(redot, project, env | {"REDOT_GIT_NEGATIVE_CASE": "hook-rejection"})
+    checked([git, *https_options, "fetch", "origin"], peer)
+    after = checked([git, "rev-parse", "origin/main"], peer)
+    rejection["verification"] = {
+        "remote_unchanged": before == after,
+        "rejection_reported": "Push rejected:" in rejection["output"],
+        "success_marker_absent": "Push ended" not in rejection["output"],
+        "sentinel_matches": scan_for_sentinels(project, rejection["output"], sentinels),
+    }
+    rejection["passed"] = rejection["passed"] and before == after and rejection["verification"]["rejection_reported"] and rejection["verification"]["success_marker_absent"] and not rejection["verification"]["sentinel_matches"]
+    reports.append(rejection)
+    return reports
 
 
 def main() -> int:
@@ -309,6 +350,10 @@ def main() -> int:
         if pushed_https != "pushed over https" or https_report["verification"]["sentinel_matches"]:
             https_report["passed"] = False
         reports.append(https_report)
+        reports.extend(run_negative_transports(
+            arguments.redot, https_project, https_env, container, fixtures,
+            arguments.git, https_peer, https_options, (http_username, http_password),
+        ))
 
         ssh_project = temp_root / "ssh project-\u00e9"
         ssh_peer = temp_root / "ssh-peer"
@@ -349,7 +394,7 @@ def main() -> int:
     summary = {
         "provider_sha256": hashlib.sha256(arguments.provider.read_bytes()).hexdigest(),
         "reports": reports,
-        "passed": len(reports) == 2 and all(report["passed"] for report in reports),
+        "passed": len(reports) == 4 and all(report["passed"] for report in reports),
     }
     summary = sanitize(summary, {str(arguments.redot): "$REDOT_BIN", str(arguments.provider): "<provider binary>",
                                  str(temp_root): "<temp dir>", str(root): "<repo clone>"})

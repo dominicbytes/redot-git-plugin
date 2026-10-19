@@ -62,5 +62,25 @@ chown -R www-data:www-data "$git_root/https.git"
 chown -R git:git "$git_root/ssh.git"
 
 /usr/sbin/sshd
-touch "$fixture_dir/ready"
-exec apachectl -D FOREGROUND
+apachectl -D FOREGROUND &
+apache_pid=$!
+trap 'apachectl -k stop >/dev/null 2>&1 || true' EXIT HUP INT TERM
+
+deadline=$(($(date +%s) + 45))
+while :; do
+    # A TLS handshake and authentication challenge prove Apache accepts HTTPS;
+    # an SSH host-key exchange proves sshd accepts protocol connections.
+    http_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+        --connect-timeout 1 --max-time 2 --cacert "$fixture_dir/ca.crt" \
+        'https://localhost/git/https.git/info/refs?service=git-upload-pack') || http_status=0
+    if [ "$http_status" = 401 ] && ssh-keyscan -T 1 localhost >/dev/null 2>&1; then
+        touch "$fixture_dir/ready"
+        break
+    fi
+    if ! kill -0 "$apache_pid" 2>/dev/null || [ "$(date +%s)" -ge "$deadline" ]; then
+        echo 'Transport fixture readiness deadline exceeded' >&2
+        exit 1
+    fi
+    sleep 0.25
+done
+wait "$apache_pid"

@@ -1,0 +1,12 @@
+--- a/src/util/net.c
++++ b/src/util/net.c
+@@ -970,3 +970,6 @@
+-		if (original->host &&
+-		    !allow_offsite &&
+-		    git__strcasecmp(original->host, tmp.host) != 0) {
++		/* Downstream security fix (2026-10-19): cached credentials must
++		 * not follow a redirect to a different scheme or port either. */
++		if (!allow_offsite &&
++		    (git__strcasecmp(original->scheme, tmp.scheme) != 0 ||
++		     git__strcasecmp(original->host, tmp.host) != 0 ||
++		     strcmp(original->port, tmp.port) != 0)) {

@@ -84,8 +84,13 @@ cross-check; see ADR-0014 for the exceptions' removal condition.
 For HTTPS remotes, enter the account name and token in Redot's credential
 fields. For SSH remotes, use the SSH username, public/private key paths, and
 optional passphrase fields. Do not put passwords, tokens, or private key data
-in a remote URL. URLs containing user information or credential-like query
-parameters are rejected.
+in a remote URL. HTTP/HTTPS user information, passwords in SSH URLs, and
+credential-like query parameters are rejected, including configured push URLs
+and URL rewrites. Username-only SSH URLs such as `git@host:owner/repo.git` and
+`ssh://git@host/owner/repo.git` are accepted. Cross-host redirects are disabled;
+use the final server URL. Credential requests are restricted to that URL's scheme, host,
+and port, with at most three credential attempts and one SSH agent attempt per
+operation. Pushes do not set upstream tracking.
 
 ## Exporting games
 

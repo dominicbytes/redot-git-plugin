@@ -5,12 +5,14 @@ RUN apt-get update \
         apache2 \
         apache2-utils \
         ca-certificates \
+        curl \
         git \
         openssh-server \
+        openssh-client \
         openssl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN a2enmod alias auth_basic cgi env ssl \
+RUN a2enmod alias auth_basic cgi env ssl rewrite setenvif \
     && a2dissite 000-default default-ssl
 
 COPY apache-git.conf /etc/apache2/sites-available/git-ssl.conf

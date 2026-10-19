@@ -175,3 +175,20 @@
   for Redot 26.2 as well as 26.3.
 - Consequence: The branch names the new release line; it does not change the
   retained binding baseline or rewrite upstream history.
+
+## ADR-0016: Restrict authenticated redirects to the complete origin
+
+- Date: 2026-10-19
+- Status: accepted
+- Context: libgit2 1.9.7 checks only the hostname when off-site redirects
+  are forbidden. Its HTTP transport caches credentials after authentication,
+  so a redirect to another port bypasses the provider's credential callback.
+- Decision: Apply the small redirect-origin patch before configuring CMake.
+  Require unchanged scheme, host and port when off-site redirection is
+  disabled. Apply it idempotently to a generated build copy and fail clearly
+  if the patch no longer applies; keep the locked submodule unmodified.
+- Consequence: This is a security fix, not diagnostic suppression forbidden
+  by ADR-0008. Relative and same-origin redirects remain supported. The fix
+  should be reported upstream through the security process, then removed
+  when the locked upstream revision includes equivalent protection. Repeat
+  offline redirect tests, transport checks and binary audits on replacement.

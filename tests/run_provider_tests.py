@@ -15,6 +15,7 @@ from pathlib import Path
 from diagnostics import check_process, engine_identity, run_process, sanitize
 from typing import Callable
 
+from redirect_fixture import redirect_fixture
 from provider_layout import install_provider, install_scenario_driver
 
 
@@ -128,6 +129,57 @@ def prepare_security(project: Path, git: str) -> None:
     (project / "security.txt").write_text("security baseline\n", encoding="utf-8", newline="\n")
     checked([git, "add", "security.txt"], project)
     checked([git, "commit", "-m", "Security baseline"], project)
+
+
+def prepare_security_remotes(project: Path, temp_root: Path, git: str) -> None:
+    prepare_security(project, git)
+    safe = "https://example.invalid/repo.git"
+    secret = "POLICY_SECRET_42"
+    for name in ("unsafe-fetch", "unsafe-push", "rewritten-fetch", "rewritten-push"):
+        checked([git, "remote", "add", name, safe], project)
+    checked([git, "config", "remote.unsafe-fetch.url", safe + "?%74oken=" + secret], project)
+    checked([git, "config", "remote.unsafe-push.pushurl", "https://user:" + secret + "@example.invalid/repo.git"], project)
+    checked([git, "config", "remote.rewritten-fetch.url", "fixture-fetch:repo.git"], project)
+    checked([git, "config", "url.https://user:" + secret + "@example.invalid/.insteadOf", "fixture-fetch:"], project)
+    checked([git, "config", "url.https://user:" + secret + "@example.invalid/.pushInsteadOf", safe], project)
+    # libgit2's local transport does not execute receive hooks. A locked ref
+    # exercises its real per-reference rejection path without a network server.
+    remote = temp_root / "locked.git"
+    checked([git, "init", "--bare", "--initial-branch=main", str(remote)], temp_root)
+    checked([git, "remote", "add", "locked-remote", remote.as_posix()], project)
+    (remote / "refs" / "heads" / "main.lock").write_text("locked by fixture\n", encoding="utf-8")
+
+
+def prepare_ambiguous_remote(project: Path, git: str, url: str) -> None:
+    initialize_repository(project, git)
+    (project / "redirect-config.json").write_text(json.dumps({"url": url}), encoding="utf-8")
+    checked([git, "config", "remote.ambiguous-effective.url", url], project)
+    checked([git, "config", "remote.ambiguous-effective.pushurl", url], project)
+
+
+def verify_security_output(report: dict[str, object]) -> None:
+    output = str(report["output"])
+    policy_failures = output.count("Remote URLs must not contain credentials")
+    rejected = all(marker in output for marker in ("Push rejected: refs/heads/main", "Push rejected: refs/heads/second", "[updated] refs/heads/accepted", "remote rejected a reference update"))
+    report["network_verification"] = {
+        "policy_failures": policy_failures,
+        "push_rejection_reported": rejected,
+        "success_marker_absent": all(marker not in output for marker in ("GitPlugin: Push ended", "Fetch ended", "Pull ended")),
+    }
+    if policy_failures < 30 or not rejected or not report["network_verification"]["success_marker_absent"]:
+        report["passed"] = False
+
+
+def verify_security_regression(report: dict[str, object]) -> None:
+    output = str(report["output"])
+    if report["result"].get("scenario") == "security_cr":
+        lines = [line for line in output.splitlines() if line.startswith("remote: ")]
+        expected = ["remote: CR_ONE", "remote: CR_TWO", "remote: CR_THREE", "remote: CR_TAIL"]
+        report["framing"] = lines[:4] == expected and len(lines) == 1104
+        report["passed"] = report["passed"] and report["framing"]
+    if report["result"].get("scenario") == "security_long_output":
+        report["sentinel_free"] = all(value not in output for value in ("LONG_SECRET", "QUERY_SECRET", "fixture-password"))
+        report["passed"] = report["passed"] and report["sentinel_free"]
 
 
 def prepare_edge_matrix(project: Path, git: str) -> None:
@@ -411,6 +463,40 @@ def main() -> int:
 
     try:
         execute_index_regressions(execute, arguments.git)
+        for cross_port in (True, False):
+            with redirect_fixture(cross_port) as (url, events):
+                def prepare_redirect(project: Path, _temp_root: Path) -> None:
+                    initialize_repository(project, arguments.git)
+                    (project / "redirect-config.json").write_text(json.dumps({"url": url}), encoding="utf-8")
+                scenario = "security_redirect_cross" if cross_port else "security_redirect_same"
+                _case_root, _case_project, report = execute(scenario, prepare_redirect)
+                authenticated_source = any(not event["destination"] and event["authorization_valid"] for event in events)
+                destinations = [event for event in events if event["destination"]]
+                report["redirect_verification"] = {
+                    "authenticated_source": authenticated_source,
+                    "destination_requests": len(destinations),
+                    "destination_authorization": any(event["authorization_present"] for event in destinations),
+                }
+                policy_passed = not destinations if cross_port else any(event["authorization_valid"] for event in destinations) and all(not event["authorization_present"] or event["authorization_valid"] for event in destinations)
+                report["passed"] = report["passed"] and authenticated_source and policy_passed
+        for delimiter, suffix in (("?", "query"), ("#", "fragment")):
+            with redirect_fixture(False) as (url, events):
+                ambiguous = url.replace("http://", "http://user:URL_SECRET" + delimiter + "x@", 1)
+                _case_root, _case_project, report = execute(
+                    "security_ambiguous_" + suffix,
+                    lambda project, _temp_root: prepare_ambiguous_remote(project, arguments.git, ambiguous),
+                )
+                report["authority_verification"] = {
+                    "requests": len(events),
+                    "authorization_present": any(event["authorization_present"] for event in events),
+                    "sentinel_free": "URL_SECRET" not in str(report["output"]),
+                }
+                report["passed"] = report["passed"] and not events and report["authority_verification"]["sentinel_free"]
+        for scenario in ("security_authority", "security_uri_output", "security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback"):
+            _case_root, _case_project, report = execute(
+                scenario, lambda project, _temp_root: initialize_repository(project, arguments.git)
+            )
+            verify_security_regression(report)
         execute_local_regressions(execute, arguments.git)
         execute("local", lambda project, temp_root: prepare_local(project, temp_root, arguments.git))
 
@@ -502,7 +588,7 @@ def main() -> int:
         reports.append(resolution_report)
 
         _root, security_project, security_report = execute(
-            "security", lambda project, _temp_root: prepare_security(project, arguments.git)
+            "security", lambda project, temp_root: prepare_security_remotes(project, temp_root, arguments.git)
         )
         sentinels = (
             "sentinel-user-42",
@@ -510,15 +596,17 @@ def main() -> int:
             "SENTINEL_PASSPHRASE_42",
             "SENTINEL_URL_SECRET_42",
             "SENTINEL_QUERY_SECRET_42",
-            "C:" + chr(47) + "sentinel/PUBLIC_KEY_42.pub",
-            "C:" + chr(47) + "sentinel/PRIVATE_KEY_42",
+            "sentinel/PUBLIC_KEY_42.pub",
+            "sentinel/PRIVATE_KEY_42",
         )
         leaked = []
         for path in security_project.rglob("*"):
             if path.is_file():
                 data = path.read_bytes()
                 leaked.extend(f"{path.relative_to(security_project).as_posix()}:sentinel" for sentinel in sentinels if sentinel.encode() in data)
+        verify_security_output(security_report)
         combined_output = security_report["output"]
+        leaked.extend("output:sentinel" for sentinel in ("POLICY_SECRET_42", "UNCONFIGURED_SPLIT_SECRET_42", "UNCONFIGURED_QUERY_SECRET_42") if sentinel in combined_output)
         leaked.extend("output:sentinel" for sentinel in sentinels if sentinel in combined_output)
         security_report["verification"] = {"sentinel_matches": leaked}
         if leaked:
