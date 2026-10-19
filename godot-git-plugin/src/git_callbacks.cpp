@@ -103,10 +103,8 @@ extern "C" int fetchhead_foreach_cb(const char *ref_name, const char *remote_url
 }
 
 extern "C" int mergehead_foreach_cb(const git_oid *oid, void *payload) {
-	git_oid *merge_oid = static_cast<git_oid *>(payload);
-	if (git_oid_is_zero(merge_oid)) {
-		git_oid_cpy(merge_oid, oid);
-	}
+	std::vector<git_oid> *merge_heads = static_cast<std::vector<git_oid> *>(payload);
+	merge_heads->push_back(*oid);
 	return 0;
 }
 

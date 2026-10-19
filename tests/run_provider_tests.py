@@ -172,6 +172,91 @@ def prepare_detached(project: Path, git: str) -> None:
     checked([git, "checkout", "--detach"], project)
 
 
+def prepare_local_regression(project: Path, temp_root: Path, git: str, scenario: str) -> None:
+    initialize_repository(project, git)
+    if scenario == "unborn_line":
+        return
+    files = {"asset[1].txt": "base\n", "asset1.txt": "base\n"}
+    if scenario.startswith("external_"):
+        files = {"selected.txt": "base\n", "external.txt": "base\n"}
+    elif scenario in ("rename_commit", "staged_path"):
+        files = {"old.txt": "rename content\n"}
+    elif scenario == "branch_collision":
+        files = {"branch.txt": "base\n"}
+    elif scenario == "legacy_encoding":
+        files = {"legacy.txt": "base\n"}
+    elif scenario.startswith("merge_") or scenario == "pending_pull":
+        files = {"base.txt": "base\n"}
+    for name, content in files.items():
+        (project / name).write_text(content, encoding="utf-8", newline="\n")
+    checked([git, "add", *files], project)
+    checked([git, "commit", "-m", "Regression baseline"], project)
+    if scenario.startswith("literal_"):
+        for name in files:
+            (project / name).write_text("changed\n", encoding="utf-8", newline="\n")
+        if scenario == "literal_unstage":
+            checked([git, "add", "--all"], project)
+    elif scenario.startswith("external_"):
+        (project / "external.txt").write_text("external changed\n", encoding="utf-8", newline="\n")
+        (project / "selected.txt").write_text("selected changed\n", encoding="utf-8", newline="\n")
+        if scenario == "external_unstage":
+            checked([git, "add", "selected.txt"], project)
+    elif scenario == "rename_commit":
+        (project / ".git" / "info").mkdir(exist_ok=True)
+        (project / ".git" / "info" / "exclude").write_text("*\n!old.txt\n!destination.txt\n", encoding="utf-8")
+        (project / "old.txt").rename(project / "destination.txt")
+    elif scenario == "staged_path":
+        checked([git, "mv", "old.txt", "index.txt"], project)
+        (project / "index.txt").rename(project / "working.txt")
+    elif scenario == "branch_collision":
+        checked([git, "config", "core.autocrlf", "false"], project)
+        checked([git, "tag", "feature"], project)
+        checked([git, "checkout", "-b", "feature"], project)
+        (project / "branch.txt").write_text("feature\n", encoding="utf-8", newline="\n")
+        checked([git, "add", "branch.txt"], project)
+        checked([git, "commit", "-m", "Feature branch"], project)
+        checked([git, "checkout", "main"], project)
+    elif scenario.startswith("merge_") or scenario == "pending_pull":
+        for branch in ("side", "second"):
+            checked([git, "checkout", "-b", branch, "main"], project)
+            (project / f"{branch}.txt").write_text(f"{branch}\n", encoding="utf-8", newline="\n")
+            checked([git, "add", f"{branch}.txt"], project)
+            checked([git, "commit", "-m", f"Add {branch}"], project)
+        checked([git, "checkout", "main"], project)
+        if scenario == "pending_pull":
+            remote = temp_root / "remote.git"
+            checked([git, "clone", "--bare", str(project), str(remote)], temp_root)
+            checked([git, "remote", "add", "origin", remote.as_posix()], project)
+        if scenario != "merge_external":
+            branches = ["side", "second"] if scenario == "merge_octopus" else ["side"]
+            checked([git, "merge", "--no-ff", "--no-commit", *branches], project)
+    elif scenario == "legacy_encoding":
+        tree = command_output([git, "rev-parse", "HEAD^{tree}"], project)
+        parent = command_output([git, "rev-parse", "HEAD"], project)
+        for encoding, message in ((None, b"Fallback \xe9\n"), ("ISO-8859-1", b"Declared \xc3\xa9\n"), ("latin1", b"Alias \xc3\xa9\n")):
+            header = f"tree {tree}\nparent {parent}\n".encode()
+            header += b"author Jos\xe9 <fixture@example.invalid> 1700000000 +0000\ncommitter Fixture <fixture@example.invalid> 1700000000 +0000\n"
+            if encoding:
+                header += f"encoding {encoding}\n".encode()
+            payload = project / ".git" / "commit-payload"
+            payload.write_bytes(header + b"\n" + message)
+            parent = command_output([git, "hash-object", "-t", "commit", "-w", str(payload)], project)
+        checked([git, "update-ref", "HEAD", parent], project)
+        (project / "legacy.txt").write_bytes(b"caf\xe9\n\xff changed\n")
+
+
+def execute_local_regressions(execute: Callable[[str, Prepare], tuple[Path, Path, dict[str, object]]], git: str) -> None:
+    scenarios = (
+        "literal_stage", "literal_unstage", "literal_discard",
+        "external_stage", "external_unstage", "external_commit",
+        "rename_commit", "staged_path", "branch_collision",
+        "merge_external", "merge_aborted", "merge_resumed", "merge_octopus",
+        "pending_pull", "legacy_encoding", "unborn_line",
+    )
+    for scenario in scenarios:
+        execute(scenario, lambda project, temp_root, case=scenario: prepare_local_regression(project, temp_root, git, case))
+
+
 def parse_result(output: str) -> dict[str, object]:
     for line in output.splitlines():
         if line.startswith(RESULT_PREFIX):
@@ -242,6 +327,7 @@ def main() -> int:
         return temp_root, project, report
 
     try:
+        execute_local_regressions(execute, arguments.git)
         execute("local", lambda project, temp_root: prepare_local(project, temp_root, arguments.git))
 
         _root, _project, nonrepo_report = execute("nonrepo")
