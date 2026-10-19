@@ -181,7 +181,8 @@ def run_provider(redot: Path, project: Path, env: dict[str, str]) -> dict[str, o
         result = {"passed": False}
     identity = engine_identity(redot, project)
     diagnostics = check_process(process, identity=identity,
-                                result_passed=result.get("passed") is True, provider_active=True)
+                                result_passed=result.get("passed") is True, provider_active=True,
+                                providers_freed=result.get("providers_freed"))
     return {
         "redot_version": identity,
         "exit_code": process.returncode,

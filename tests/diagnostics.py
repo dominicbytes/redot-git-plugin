@@ -20,6 +20,11 @@ LEAK = re.compile(
     r'|WARNING: \d+ RIDs of type ".+" were leaked\.'
     r"|WARNING: ObjectDB instances leaked at exit \(run with --verbose for details\)\.)$"
 )
+PROVIDER_ACTIVITY = re.compile(
+    r"GitPlugin:|GitPlugin::|libgit_plugin|git_plugin\.(?:cpp|h)|git_callbacks\.(?:cpp|h)"
+    r"|Found a repository at |Selected repository path:|git_libgit2_init|test_initialize",
+    re.I,
+)
 # Only these deliberate negative cases may produce provider diagnostics.
 EXPECTED = {
     "nonrepo": (r"WARNING: GitPlugin: No existing Git repository was found\. Initialize one before enabling version control\.",),
@@ -38,31 +43,46 @@ EXPECTED = {
 
 
 def classify(output: str, exit_code: int, *, identity: str, result_passed: bool,
-             provider_active: bool = True, scenario: str = "", timed_out: bool = False) -> dict[str, Any]:
-    """Accept the known shutdown crash only after a successful provider shutdown."""
+             provider_active: bool = True, scenario: str = "", timed_out: bool = False,
+             providers_freed: bool | None = None, import_only: bool = False) -> dict[str, Any]:
+    """Separate exact official-engine exit defects from clean provider results."""
     output = re.sub(r"\x1b\[[0-9;]*m", "", output)
     shutdown = re.search(r"^" + re.escape(SHUTDOWN_MARKER) + r"$", output, re.MULTILINE)
     marker = shutdown.start() if shutdown else -1
     crash = CRASH_BANNER.search(output)
+    eligible = (
+        not timed_out and identity == OFFICIAL_26_3 and result_passed
+        and (providers_freed is None or providers_freed is True)
+    )
     known_crash = (
-        not timed_out and identity == OFFICIAL_26_3 and exit_code in CRASH_CODES
-        and result_passed and provider_active and marker >= 0
+        eligible and exit_code in CRASH_CODES and provider_active and marker >= 0
         and crash is not None and marker < crash.start()
     )
+    known_leak = (
+        eligible and exit_code == 0 and provider_active and marker >= 0 and crash is None
+        and any(LEAK.fullmatch(line.strip()) for line in output.splitlines())
+    )
+    known_import_crash = (
+        eligible and import_only and not provider_active and exit_code in CRASH_CODES
+        and PROVIDER_ACTIVITY.search(output) is None
+    )
+    engine_exit = known_crash or known_leak or known_import_crash
     failures: list[str] = []
     if timed_out:
         failures.append("engine timed out")
     if not result_passed:
         failures.append("scenario result did not pass")
+    if providers_freed is not None and providers_freed is not True:
+        failures.append("provider instances were not freed")
     if provider_active and marker < 0:
         failures.append("provider shutdown marker missing")
-    if exit_code != 0 and not known_crash:
+    if exit_code != 0 and not (known_crash or known_import_crash):
         failures.append(f"engine exited with code {exit_code}")
     allowed_context = False
     for raw_line in output.splitlines():
         line = raw_line.strip()
         if CRASH_BANNER.search(line):
-            if not known_crash:
+            if not (known_crash or known_import_crash):
                 failures.append("unexpected crash banner")
             continue
         if line.startswith("at:"):
@@ -71,13 +91,20 @@ def classify(output: str, exit_code: int, *, identity: str, result_passed: bool,
             continue
         if DIAGNOSTIC.search(line):
             expected = any(re.fullmatch(pattern, line) for pattern in EXPECTED.get(scenario, ()))
-            allowed_context = expected or (known_crash and LEAK.fullmatch(line) is not None)
+            allowed_context = expected or (engine_exit and LEAK.fullmatch(line) is not None)
             if not allowed_context:
                 failures.append("unexpected diagnostic: " + line)
         elif line:
             allowed_context = False
+    outcome = "passed"
+    if known_crash:
+        outcome = "known_engine_shutdown_crash"
+    elif known_leak:
+        outcome = "known_engine_shutdown_leak"
+    elif known_import_crash:
+        outcome = "known_engine_import_crash"
     return {
-        "outcome": "failed" if failures else "known_engine_shutdown_crash" if known_crash else "passed",
+        "outcome": "failed" if failures else outcome,
         "passed": not failures,
         "failures": failures,
     }
@@ -139,11 +166,19 @@ def engine_identity(redot: Path, cwd: Path) -> str:
 
 def check_process(process: subprocess.CompletedProcess[str], *, identity: str,
                   result_passed: bool = True, provider_active: bool = False,
-                  scenario: str = "") -> dict[str, Any]:
+                  scenario: str = "", providers_freed: bool | None = None) -> dict[str, Any]:
+    arguments = process.args if isinstance(process.args, (list, tuple)) else []
+    import_only = (
+        "--import" in arguments and ("--editor" in arguments or "-e" in arguments)
+        and not any(flag in arguments for flag in (
+            "--script", "-s", "--", "--export-release", "--export-debug", "--export-pack",
+        ))
+    )
     return classify(process.stdout + (process.stderr or ""), process.returncode,
                     identity=identity, result_passed=result_passed,
                     provider_active=provider_active, scenario=scenario,
-                    timed_out=getattr(process, "timed_out", False))
+                    timed_out=getattr(process, "timed_out", False),
+                    providers_freed=providers_freed, import_only=import_only)
 
 
 def sanitize(value: Any, replacements: Mapping[str, str] | None = None) -> Any:

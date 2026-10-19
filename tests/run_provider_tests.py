@@ -199,7 +199,8 @@ def run_scenario(redot: Path, project: Path, scenario: str, identity: str) -> di
     except (ValueError, json.JSONDecodeError):
         result = {"scenario": scenario, "passed": False}
     diagnostics = check_process(process, identity=identity, result_passed=result.get("passed") is True,
-                                provider_active=scenario != "nonrepo", scenario=scenario)
+                                provider_active=scenario != "nonrepo", scenario=scenario,
+                                providers_freed=result.get("providers_freed"))
     return {
         "command": command,
         "exit_code": process.returncode,

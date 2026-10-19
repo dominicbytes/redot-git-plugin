@@ -8,7 +8,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from diagnostics import OFFICIAL_26_3, classify, controlled_environment, run_process, sanitize
+from diagnostics import OFFICIAL_26_3, check_process, classify, controlled_environment, run_process, sanitize
 
 
 class DiagnosticsTests(unittest.TestCase):
@@ -45,9 +45,107 @@ class DiagnosticsTests(unittest.TestCase):
         text = "GitPlugin: Shut down\nERROR: provider load failed\nCrashHandler: Program crashed"
         self.assertFalse(self.classify(text, 139)["passed"])
 
-    def test_leaks_without_known_crash_fail(self):
-        text = "GitPlugin: Shut down\nWARNING: ObjectDB instances leaked at exit (run with --verbose for details)."
+    def test_leaks_without_completed_shutdown_fail(self):
+        text = "WARNING: ObjectDB instances leaked at exit (run with --verbose for details)."
         self.assertFalse(self.classify(text)["passed"])
+
+    def test_exact_official_exit_zero_leaks_are_classified(self):
+        lines = (
+            "ERROR: 1 RID allocations of type 'N6RendererSceneCull8InstanceE' were leaked at exit.",
+            'WARNING: 1 RIDs of type "Canvas" were leaked.',
+            "WARNING: ObjectDB instances leaked at exit (run with --verbose for details).",
+        )
+        for line in lines:
+            with self.subTest(line=line):
+                text = "GitPlugin: Shut down\n" + line + "\n   at: cleanup (core/object/object.cpp:1)"
+                result = self.classify(text, providers_freed=True)
+                self.assertTrue(result["passed"])
+                self.assertEqual(result["outcome"], "known_engine_shutdown_leak")
+
+    def test_leak_tolerance_requires_exact_identity_and_success(self):
+        text = "GitPlugin: Shut down\nWARNING: ObjectDB instances leaked at exit (run with --verbose for details)."
+        for options in (
+            {"identity": "26.2.stable.official.4f5b14aba"},
+            {"identity": "26.3.stable.custom_build.85e520394"},
+            {"result_passed": False}, {"providers_freed": False},
+            {"providers_freed": "true"}, {"timed_out": True},
+            {"provider_active": False},
+        ):
+            with self.subTest(options=options):
+                self.assertFalse(self.classify(text, **options)["passed"])
+
+    def test_leak_tolerance_rejects_other_diagnostics_and_exit_codes(self):
+        text = "GitPlugin: Shut down\nWARNING: ObjectDB instances leaked at exit (run with --verbose for details)."
+        for extra in ("ERROR: provider load failed", "WARNING: unknown warning", "CrashHandler: Program crashed"):
+            with self.subTest(extra=extra):
+                self.assertFalse(self.classify(text + "\n" + extra)["passed"])
+        for code in (1, 2, 139):
+            with self.subTest(code=code):
+                self.assertFalse(self.classify(text, code)["passed"])
+
+    def test_clean_shutdown_remains_a_clean_pass(self):
+        self.assertEqual(self.classify("GitPlugin: Shut down")["outcome"], "passed")
+
+    def test_shutdown_crash_rejects_unfreed_instances(self):
+        text = "GitPlugin: Shut down\nCrashHandler: Program crashed"
+        self.assertFalse(self.classify(text, 139, providers_freed=False)["passed"])
+
+    def test_pure_import_crash_without_provider_activity_is_classified(self):
+        for code in (0xC0000005, -1073741819, 139, -11):
+            for output in ("Import complete\n====", "CrashHandler: Program crashed"):
+                with self.subTest(code=code, output=output):
+                    result = self.classify(output, code, import_only=True, provider_active=False)
+                    self.assertTrue(result["passed"])
+                    self.assertEqual(result["outcome"], "known_engine_import_crash")
+
+    def test_import_crash_allows_only_engine_leak_diagnostics(self):
+        text = "WARNING: ObjectDB instances leaked at exit (run with --verbose for details).\n   at: cleanup (core/object/object.cpp:1)"
+        self.assertTrue(self.classify(text, 139, import_only=True, provider_active=False)["passed"])
+        self.assertFalse(self.classify(text + "\nERROR: provider failed", 139,
+                                       import_only=True, provider_active=False)["passed"])
+
+    def test_import_exception_rejects_provider_activity_and_frames(self):
+        for line in (
+            "GitPlugin: Loaded system CA certificates", "Found a repository at <fixture project>",
+            "Selected repository path: <fixture project>", "GitPlugin: Shut down",
+            "[1] libgit_plugin.windows.editor.x86_64.dll!git_plugin_init",
+            "[1] GitPlugin::_initialize", "   at: check_errors (src/git_plugin.cpp:1)",
+            "[1] credentials_cb (src/git_callbacks.cpp:1)",
+        ):
+            with self.subTest(line=line):
+                self.assertFalse(self.classify(line + "\nCrashHandler: Program crashed", 139,
+                                               import_only=True, provider_active=False)["passed"])
+
+    def test_import_exception_rejects_other_engines_and_failed_results(self):
+        for options in (
+            {"identity": "26.2.stable.official.4f5b14aba"},
+            {"identity": "26.3.stable.custom_build.85e520394"},
+            {"result_passed": False}, {"timed_out": True}, {"providers_freed": False},
+        ):
+            with self.subTest(options=options):
+                self.assertFalse(self.classify("CrashHandler: Program crashed", 139,
+                                               import_only=True, provider_active=False, **options)["passed"])
+        self.assertFalse(self.classify("CrashHandler: Program crashed", 1,
+                                       import_only=True, provider_active=False)["passed"])
+
+    def test_real_nonrepo_crash_without_shutdown_remains_fatal(self):
+        self.assertFalse(self.classify("Import complete\n====", 0xC0000005,
+                                       scenario="nonrepo", provider_active=False)["passed"])
+        self.assertFalse(self.classify("CrashHandler: Program crashed", 139,
+                                       import_only=True, provider_active=True)["passed"])
+
+    def test_import_tolerance_requires_an_import_only_command(self):
+        for arguments, accepted in (
+            (["engine", "--editor", "--import"], True),
+            (["engine", "--editor"], False),
+            (["engine", "--editor", "--import", "--script", "scenario.gd"], False),
+            (["engine", "--editor", "--import", "--", "nonrepo"], False),
+            (["engine", "--import", "--export-release", "preset"], False),
+        ):
+            with self.subTest(arguments=arguments):
+                process = subprocess.CompletedProcess(arguments, 139, "CrashHandler: Program crashed", "")
+                result = check_process(process, identity=OFFICIAL_26_3)
+                self.assertEqual(result["passed"], accepted)
 
     def test_expected_negative_case_is_scoped(self):
         text = "GitPlugin: Shut down\nERROR: GitPlugin: Changes are staged. Make a merge commit.\n   at: push_error (core/variant/variant_utility.cpp:1)"

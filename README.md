@@ -57,12 +57,15 @@ baseline. CI verifies both API contracts, then activates each platform's
 production binary on both official editors. Windows additionally runs the
 provider parity suite on both versions using one test-only binary.
 
-The official 26.3 editor has an intermittent headless shutdown crash also
+The official 26.3 editor has intermittent headless shutdown defects also
 reproduced without the plugin. Tests report `known_engine_shutdown_crash`
-separately only after a passing scenario and completed provider shutdown on
-the exact pinned official identity. Unknown diagnostics and earlier failures
-remain fatal. A patched 26.3 editor provides a clean local cross-check; see
-ADR-0013 for the exception's removal condition.
+and `known_engine_shutdown_leak` separately after a passing scenario and
+completed provider shutdown on the exact pinned official identity. Reported
+provider instances must be freed. Import-only crashes have a separate
+`known_engine_import_crash` category and require no provider activity or
+plugin frames. Unknown diagnostics and earlier failures remain fatal. A
+patched 26.3 editor provides a clean local cross-check; see ADR-0014 for the
+exceptions' removal condition.
 
 ## Installation
 

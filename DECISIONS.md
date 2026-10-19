@@ -135,22 +135,28 @@
   remain auditable. The 26.3 JSON is runtime evidence only. This extends the
   runtime target in ADR-0004 without replacing its binding baseline.
 
-## ADR-0014: Classify the exact official 26.3 shutdown crash temporarily
+## ADR-0014: Classify exact official 26.3 exit defects temporarily
 
 - Date: 2026-10-19
 - Status: temporary
-- Decision: Report `known_engine_shutdown_crash` separately only for exact
-  identity `26.3.stable.official.85e520394`, a known access-violation exit,
-  passing scenario result, and successful provider shutdown marker before
-  the crash banner. Only the documented RID/ObjectDB exit leaks and expected
-  negative-case diagnostics may accompany it.
-- Context: The official editor reproduces this shutdown defect without the
+- Decision: Report `known_engine_shutdown_crash` only for exact identity
+  `26.3.stable.official.85e520394`, a known access-violation exit, passing
+  scenario result, and successful provider shutdown marker before the crash
+  banner. Report `known_engine_shutdown_leak` separately for exit zero with
+  the same identity, passing result, completed shutdown, and only documented
+  RID/ObjectDB exit leaks. Require freed instances when the fixture reports
+  their lifetime.
+- Context: The official editor reproduces these shutdown defects without the
   plugin; a patched 26.3 editor supplies the clean runtime cross-check.
-- Consequence: Timeouts, pre-shutdown crashes, missing/failed results, load
-  failures, unknown diagnostics, other engine identities, and import crashes
-  without a completed provider shutdown remain fatal. Remove the exception
-  and its leak allowlist once CI pins an official engine with the shutdown
-  fix and the clean activation and parity checks pass on all platforms.
+- Decision: A verified editor-only `--import` command may report
+  `known_engine_import_crash` for the same exact identity and crash exit only
+  when no provider initialization, activity, or plugin frame appears. A real
+  scenario without completed provider shutdown remains fatal.
+- Consequence: Timeouts, missing/failed results, load failures, unknown
+  diagnostics, unfreed providers, and other engine identities remain fatal.
+  Keep all environmental categories separate from clean passes. Remove the
+  exceptions and leak allowlist once CI pins an official engine with the
+  shutdown fix and clean activation and parity pass on all platforms.
 
 ## ADR-0015: Use redot-26.3 for the new release line
 
