@@ -28,12 +28,17 @@ jobs:
         run: |
           python scripts/compare_vcs_api.py
           git diff --exit-code -- reports/api-diffs/git-editor-vcs-interface.md
+      - name: Run Python unit tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v
       - name: Validate Python tooling
         run: >-
           python -m py_compile
           scripts/compare_vcs_api.py
           scripts/audit_binary.py
+          scripts/binary_formats.py
+          scripts/binary_scan.py
           scripts/package_release.py
+          tests/test_release_tools.py
           tests/run_fixture.py
           tests/provider_layout.py
           tests/run_provider_tests.py
@@ -63,6 +68,7 @@ jobs:
         run: >-
           python scripts/audit_binary.py --platform linux
           --binary addons/godot-git-plugin/linux/libgit_plugin.linux.editor.x86_64.so
+          --record reports/binary-audits/linux-x86_64.json
       - name: Activate production provider in Redot
         run: |
           curl --fail --location --silent --show-error \
@@ -82,6 +88,11 @@ jobs:
           if-no-files-found: error
           path: addons/godot-git-plugin/linux/libgit_plugin.linux.editor.x86_64.so
           compression-level: 0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: redot-git-audit-linux-x86_64-${{ github.sha }}
+          if-no-files-found: error
+          path: reports/binary-audits/linux-x86_64.json
 
   windows-x86_64:
     name: Windows x86_64 production and provider suite
@@ -107,6 +118,7 @@ jobs:
         run: >-
           python scripts/audit_binary.py --platform windows
           --binary .\addons\godot-git-plugin\windows\libgit_plugin.windows.editor.x86_64.dll
+          --record reports/binary-audits/windows-x86_64.json
       - name: Download pinned Redot 26.2 editor
         shell: powershell
         run: |
@@ -143,6 +155,11 @@ jobs:
           if-no-files-found: error
           path: addons/godot-git-plugin/windows/libgit_plugin.windows.editor.x86_64.dll
           compression-level: 0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: redot-git-audit-windows-x86_64-${{ github.sha }}
+          if-no-files-found: error
+          path: reports/binary-audits/windows-x86_64.json
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -172,6 +189,7 @@ jobs:
         run: >-
           python scripts/audit_binary.py --platform macos
           --binary addons/godot-git-plugin/macos/libgit_plugin.macos.editor.universal.dylib
+          --record reports/binary-audits/macos-universal.json
       - name: Activate production provider in Redot
         run: |
           curl --fail --location --silent --show-error \
@@ -191,6 +209,11 @@ jobs:
           if-no-files-found: error
           path: addons/godot-git-plugin/macos/libgit_plugin.macos.editor.universal.dylib
           compression-level: 0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: redot-git-audit-macos-universal-${{ github.sha }}
+          if-no-files-found: error
+          path: reports/binary-audits/macos-universal.json
 
   package:
     name: Deterministic release archive
@@ -205,20 +228,32 @@ jobs:
         with:
           name: redot-git-linux-x86_64-${{ github.sha }}
           path: staging/addons/godot-git-plugin/linux
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: redot-git-audit-linux-x86_64-${{ github.sha }}
+          path: staging/binary-audits
       - uses: actions/download-artifact@v8
         with:
           name: redot-git-windows-x86_64-${{ github.sha }}
           path: staging/addons/godot-git-plugin/windows
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: redot-git-audit-windows-x86_64-${{ github.sha }}
+          path: staging/binary-audits
       - uses: actions/download-artifact@v8
         with:
           name: redot-git-macos-universal-${{ github.sha }}
           path: staging/addons/godot-git-plugin/macos
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: redot-git-audit-macos-universal-${{ github.sha }}
+          path: staging/binary-audits
       - name: Add the extension manifest
         run: cp addons/godot-git-plugin/git_plugin.gdextension staging/addons/godot-git-plugin/
       - name: Build archive twice and compare
         run: |
-          python scripts/package_release.py --input-root staging/addons/godot-git-plugin --output-dir dist-a
-          python scripts/package_release.py --input-root staging/addons/godot-git-plugin --output-dir dist-b
+          python scripts/package_release.py --input-root staging/addons/godot-git-plugin --output-dir dist-a --audit-records staging/binary-audits
+          python scripts/package_release.py --input-root staging/addons/godot-git-plugin --output-dir dist-b --audit-records staging/binary-audits
           diff -rq dist-a dist-b
           mv dist-a dist
       - uses: actions/upload-artifact@v7
