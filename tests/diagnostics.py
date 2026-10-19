@@ -58,6 +58,7 @@ EXPECTED = {
     "conflict": (r"ERROR: GitPlugin: Index has conflicts\. Solve conflicts and make a merge commit\.",),
     "security": (
         r"ERROR: GitPlugin: Remote URLs must not contain credentials\. Use Redot's version-control credential fields instead\.",
+        r"ERROR: GitPlugin: Push rejected: refs/heads/second second reference declined",
         r"ERROR: GitPlugin: Push rejected: refs/heads/main hook declined https://\[redacted\]@example\.invalid/repo\?token=\[redacted\](?: \[redacted\]){3}",
         r"ERROR: GitPlugin: Push rejected: refs/heads/main failed to lock file '.+[\\/]refs[\\/]heads[\\/]main\.lock' for writing:(?: .+)?",
         r"ERROR: GitPlugin: Failed to push\. Error -7: remote rejected a reference update in git_plugin\.cpp:GitPlugin::_push#L\d+",

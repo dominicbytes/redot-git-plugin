@@ -33,9 +33,13 @@ struct RemoteOperation {
 	CredentialOrigin origin;
 	unsigned int credential_attempts = 0;
 	bool agent_attempted = false;
+	bool key_attempted = false;
+	bool userpass_attempted = false;
+	bool username_attempted = false;
 	bool push_rejected = false;
 	std::string progress_line;
 	bool progress_overflow = false;
+	bool progress_cr = false;
 
 	RemoteOperation(const Credentials *p_credentials, const char *url);
 	~RemoteOperation();

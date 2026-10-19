@@ -39,7 +39,7 @@ func _run() -> void:
 			result = _run_resolution()
 		"security":
 			result = _run_security()
-		"security_urls", "security_origins", "security_overlap", "security_long_output":
+		"security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback":
 			result = _run_security_regression(scenario)
 		"edge":
 			result = _run_edge_matrix()
@@ -346,7 +346,7 @@ func _security_credentials(provider: Object, username: String, password: String)
 	var agent: Array = provider.call("test_credential_requests", "git@example.invalid:owner/repo.git", ["ssh://git@example.invalid:22/repo", "ssh://git@example.invalid/repo"], 2, "git")
 	var ssh_username: Array = provider.call("test_credential_requests", "ssh://git@example.invalid/repo", ["git@example.invalid:owner/repo.git"], 32, "git")
 	var fresh: Array = provider.call("test_credential_requests", origin, [same], 1, "")
-	return attempts == [true, true, true, false, false] and origins == [false, false, false, false, false] and agent == [true, false] and ssh_username == [true] and fresh == [true]
+	return attempts == [true, false, false, false, false] and origins == [false, false, false, false, false] and agent == [true, false] and ssh_username == [true] and fresh == [true]
 
 
 func _run_edge_matrix() -> Dictionary:
@@ -725,5 +725,15 @@ func _run_security_regression(scenario: String) -> Dictionary:
 			packets.append("fixture-")
 			packets.append("password\n")
 			provider.call("test_progress_packets", packets)
+		"security_cr":
+			provider.call("test_progress_packets", ["CR_ONE\r", "\nCR_TWO\rCR_", "THREE\nCR_TAIL"])
+			var packets: Array[String] = []
+			for index: int in range(1100):
+				packets.append("CR_TICK " + "x".repeat(64) + "\r")
+			provider.call("test_progress_packets", packets)
+		"security_fallback":
+			var origin := "ssh://git@example.invalid/repo"
+			var attempts: Array = provider.call("test_credential_requests", origin, [origin, origin, origin, origin], 3, "git")
+			passed = attempts == [true, true, false, false] and passed
 	result["passed"] = passed
 	return result

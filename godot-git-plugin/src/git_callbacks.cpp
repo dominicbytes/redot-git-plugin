@@ -373,9 +373,16 @@ extern "C" int progress_cb(const char *str, int len, void *data) {
 	try {
 		RemoteOperation *operation = static_cast<RemoteOperation *>(data);
 		for (int i = 0; i < len; ++i) {
-			if (str[i] == '\n') {
-				operation->flush_progress();
-			} else if (!operation->progress_overflow) {
+			if (str[i] == '\r' || str[i] == '\n') {
+				if (!(str[i] == '\n' && operation->progress_cr)) {
+					operation->flush_progress();
+				}
+				operation->progress_cr = str[i] == '\r';
+			} else {
+				operation->progress_cr = false;
+				if (operation->progress_overflow) {
+					continue;
+				}
 				if (operation->progress_line.size() == 65536) {
 					operation->progress_line.clear();
 					operation->progress_overflow = true;
@@ -476,8 +483,6 @@ extern "C" int push_update_reference_cb(const char *refname, const char *status,
 			godot::String status_str = sanitize_git_output(godot::String::utf8(status), credentials);
 			static_cast<RemoteOperation *>(data)->push_rejected = true;
 			godot::UtilityFunctions::push_error("GitPlugin: Push rejected: ", safe_refname, " ", status_str);
-			git_error_set_str(GIT_ERROR_NET, "remote rejected a reference update");
-			return GIT_EUSER;
 		} else {
 			godot::UtilityFunctions::print("[updated] ", safe_refname);
 		}
@@ -504,7 +509,8 @@ extern "C" int credentials_cb(git_cred **out, const char *url, const char *usern
 		godot::String proper_username = username_from_url && username_from_url[0] != '\0' ? godot::String::utf8(username_from_url) : creds->username;
 
 		if (!creds->ssh_public_key_path.is_empty()) {
-			if (allowed_types & GIT_CREDENTIAL_SSH_KEY) {
+			if ((allowed_types & GIT_CREDENTIAL_SSH_KEY) && !operation->key_attempted) {
+				operation->key_attempted = true;
 				return git_credential_ssh_key_new(out,
 						CString(proper_username).data,
 						CString(creds->ssh_public_key_path).data,
@@ -513,20 +519,21 @@ extern "C" int credentials_cb(git_cred **out, const char *url, const char *usern
 			}
 		}
 
-		if (creds->ssh_private_key_path.is_empty() && (allowed_types & GIT_CREDENTIAL_SSH_KEY) && !proper_username.is_empty()) {
-			if (operation->agent_attempted) {
-				git_error_set_str(GIT_ERROR_SSH, "SSH agent authentication already attempted");
-				return GIT_EUSER;
-			}
+		if (creds->ssh_private_key_path.is_empty() && (allowed_types & GIT_CREDENTIAL_SSH_KEY) && !proper_username.is_empty() && !operation->agent_attempted) {
 			operation->agent_attempted = true;
-			return git_credential_ssh_key_from_agent(out, CString(proper_username).data);
+			const int error = git_credential_ssh_key_from_agent(out, CString(proper_username).data);
+			if (error == 0) {
+				return 0;
+			}
 		}
 
-		if (allowed_types & GIT_CREDENTIAL_USERPASS_PLAINTEXT) {
+		if ((allowed_types & GIT_CREDENTIAL_USERPASS_PLAINTEXT) && !operation->userpass_attempted) {
+			operation->userpass_attempted = true;
 			return git_cred_userpass_plaintext_new(out, CString(proper_username).data, CString(creds->password).data);
 		}
 
-		if (allowed_types & GIT_CREDENTIAL_USERNAME) {
+		if ((allowed_types & GIT_CREDENTIAL_USERNAME) && !operation->username_attempted) {
+			operation->username_attempted = true;
 			return git_credential_username_new(out, CString(proper_username).data);
 		}
 

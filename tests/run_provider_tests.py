@@ -152,11 +152,11 @@ def prepare_security_remotes(project: Path, temp_root: Path, git: str) -> None:
 def verify_security_output(report: dict[str, object]) -> None:
     output = str(report["output"])
     policy_failures = output.count("Remote URLs must not contain credentials")
-    rejected = "Push rejected:" in output and "remote rejected a reference update" in output
+    rejected = all(marker in output for marker in ("Push rejected: refs/heads/main", "Push rejected: refs/heads/second", "[updated] refs/heads/accepted", "remote rejected a reference update"))
     report["network_verification"] = {
         "policy_failures": policy_failures,
         "push_rejection_reported": rejected,
-        "success_marker_absent": all(marker not in output for marker in ("Push ended", "Fetch ended", "Pull ended")),
+        "success_marker_absent": all(marker not in output for marker in ("GitPlugin: Push ended", "Fetch ended", "Pull ended")),
     }
     if policy_failures < 30 or not rejected or not report["network_verification"]["success_marker_absent"]:
         report["passed"] = False
@@ -164,6 +164,11 @@ def verify_security_output(report: dict[str, object]) -> None:
 
 def verify_security_regression(report: dict[str, object]) -> None:
     output = str(report["output"])
+    if report["result"].get("scenario") == "security_cr":
+        lines = [line for line in output.splitlines() if line.startswith("remote: ")]
+        expected = ["remote: CR_ONE", "remote: CR_TWO", "remote: CR_THREE", "remote: CR_TAIL"]
+        report["framing"] = lines[:4] == expected and len(lines) == 1104
+        report["passed"] = report["passed"] and report["framing"]
     if report["result"].get("scenario") == "security_long_output":
         report["sentinel_free"] = all(value not in output for value in ("LONG_SECRET", "QUERY_SECRET", "fixture-password"))
         report["passed"] = report["passed"] and report["sentinel_free"]
@@ -450,7 +455,7 @@ def main() -> int:
 
     try:
         execute_index_regressions(execute, arguments.git)
-        for scenario in ("security_urls", "security_origins", "security_overlap", "security_long_output"):
+        for scenario in ("security_urls", "security_origins", "security_overlap", "security_long_output", "security_cr", "security_fallback"):
             _case_root, _case_project, report = execute(
                 scenario, lambda project, _temp_root: initialize_repository(project, arguments.git)
             )

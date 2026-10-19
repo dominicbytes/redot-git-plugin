@@ -1,6 +1,7 @@
 #include "git_plugin.h"
 
 #include <git2/tree.h>
+#include <git2/sys/errors.h>
 #include <cstring>
 #include "godot_cpp/core/class_db.hpp"
 #include "godot_cpp/classes/file_access.hpp"
@@ -159,7 +160,10 @@ void GitPlugin::test_progress_packets(const godot::Array &packets) {
 
 bool GitPlugin::test_push_rejection(const godot::String &status) {
 	RemoteOperation operation(&creds, nullptr);
-	return push_update_reference_cb("refs/heads/main", CString(status).data, &operation) < 0 && operation.push_rejected;
+	const int first = push_update_reference_cb("refs/heads/main", CString(status).data, &operation);
+	const int second = first == 0 ? push_update_reference_cb("refs/heads/second", "second reference declined", &operation) : GIT_EUSER;
+	const int third = second == 0 ? push_update_reference_cb("refs/heads/accepted", nullptr, &operation) : GIT_EUSER;
+	return first == 0 && second == 0 && third == 0 && operation.push_rejected;
 }
 
 bool GitPlugin::test_set_ca_certificate(const godot::String &path) {
@@ -757,7 +761,8 @@ void GitPlugin::_push(const godot::String &remote, bool force) {
 	GIT2_CALL(git_remote_push(remote_object.get(), &refspec, &push_options), "Failed to push");
 
 	if (operation.push_rejected) {
-		return;
+		git_error_set_str(GIT_ERROR_NET, "remote rejected a reference update");
+		GIT2_CALL(GIT_EUSER, "Failed to push");
 	}
 	operation.flush_progress();
 	godot::UtilityFunctions::print("GitPlugin: Push ended");
