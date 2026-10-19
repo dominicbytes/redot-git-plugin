@@ -162,6 +162,13 @@ def verify_security_output(report: dict[str, object]) -> None:
         report["passed"] = False
 
 
+def verify_security_regression(report: dict[str, object]) -> None:
+    output = str(report["output"])
+    if report["result"].get("scenario") == "security_long_output":
+        report["sentinel_free"] = all(value not in output for value in ("LONG_SECRET", "QUERY_SECRET", "fixture-password"))
+        report["passed"] = report["passed"] and report["sentinel_free"]
+
+
 def prepare_edge_matrix(project: Path, git: str) -> None:
     initialize_repository(project, git)
     checked([git, "config", "user.name", "Jos\u00e9 Fixture"], project)
@@ -443,6 +450,11 @@ def main() -> int:
 
     try:
         execute_index_regressions(execute, arguments.git)
+        for scenario in ("security_urls", "security_origins", "security_overlap", "security_long_output"):
+            _case_root, _case_project, report = execute(
+                scenario, lambda project, _temp_root: initialize_repository(project, arguments.git)
+            )
+            verify_security_regression(report)
         execute_local_regressions(execute, arguments.git)
         execute("local", lambda project, temp_root: prepare_local(project, temp_root, arguments.git))
 

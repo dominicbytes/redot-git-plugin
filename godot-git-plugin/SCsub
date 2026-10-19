@@ -19,6 +19,13 @@ elif env["platform"] == "windows":
     env.Append(LIBS=["advapi32", "winhttp", "rpcrt4", "crypt32",
                     "ole32", "user32", "wsock32", "ws2_32", "bcrypt"])
 
+# Catch allocation/conversion failures before returning through libgit2's C API.
+# Enable exceptions only for provider objects; retain the binding build flags.
+env["CPPDEFINES"] = [define for define in env["CPPDEFINES"]
+                     if not (isinstance(define, tuple) and define[0] == "_HAS_EXCEPTIONS")]
+env["CXXFLAGS"] = [flag for flag in env["CXXFLAGS"] if flag != "-fno-exceptions"]
+env.AppendUnique(CXXFLAGS=["/EHsc"] if env.get("is_msvc", False) else ["-fexceptions"])
+
 env.Append(CPPPATH=[".", "src/"])
 
 env.Append(CPPPATH=["#thirdparty/git2/libgit2/include/"])

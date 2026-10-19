@@ -14,14 +14,23 @@ struct DiffHelper {
 	GitPlugin *git_plugin;
 };
 
-godot::String sanitize_git_output(const godot::String &text, const Credentials *credentials = nullptr);
-bool git_url_contains_credentials(const godot::String &url);
+godot::String sanitize_git_output(const godot::String &text, const Credentials *credentials = nullptr) noexcept;
+bool git_url_contains_credentials(const godot::String &url) noexcept;
 
 const char *git_remote_directional_url(const git_remote *remote, git_direction direction);
 
+struct CredentialOrigin {
+	std::string scheme;
+	std::string host;
+	std::string port;
+	bool matches(const CredentialOrigin &other) const {
+		return !host.empty() && scheme == other.scheme && host == other.host && port == other.port;
+	}
+};
+
 struct RemoteOperation {
 	const Credentials *credentials;
-	godot::String origin;
+	CredentialOrigin origin;
 	unsigned int credential_attempts = 0;
 	bool agent_attempted = false;
 	bool push_rejected = false;

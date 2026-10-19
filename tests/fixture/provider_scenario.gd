@@ -39,6 +39,8 @@ func _run() -> void:
 			result = _run_resolution()
 		"security":
 			result = _run_security()
+		"security_urls", "security_origins", "security_overlap", "security_long_output":
+			result = _run_security_regression(scenario)
 		"edge":
 			result = _run_edge_matrix()
 		"detached":
@@ -263,7 +265,7 @@ func _run_security() -> Dictionary:
 		"https://user@example.invalid/repo",
 		"https://user:" + url_secret + "@example.invalid/repo",
 		"ssh://user:" + url_secret + "@example.invalid/repo",
-		"ssh://user%3a" + url_secret + "@example.invalid/repo",
+		"ssh://user:@example.invalid/repo",
 		"user:" + url_secret + "@example.invalid:repo.git",
 	]
 	for query_name: String in ["%74oken", "api_key", "client_secret", "APIKEY", "private_token", "sig", "signature", "access_token", "key", "password", "passwd", "pass", "secret", "auth"]:
@@ -657,4 +659,71 @@ func _run_local_regression(scenario: String) -> Dictionary:
 	result["behavior_passed"] = ok
 	result["shutdown"] = provider.call("test_shutdown")
 	result["passed"] = ok and result.shutdown
+	return result
+
+
+func _run_security_regression(scenario: String) -> Dictionary:
+	var provider := _new_provider()
+	var result := {"scenario": scenario, "passed": false}
+	if provider == null:
+		return result
+	result["initialize"] = provider.call("test_initialize", ProjectSettings.globalize_path("res://"))
+	provider.call("test_set_credentials", "fixture", "fixture-password", "", "", "")
+	var passed: bool = result.initialize
+	match scenario:
+		"security_urls":
+			var allowed: Array[String] = [
+				"ssh://git%40team@example.invalid/repo", "ssh://git@team@example.invalid/repo",
+				"ssh://git%3Ateam@example.invalid/repo", "example.invalid:repo@v1.git",
+				"[2001:db8::1]:repo@v1.git", "./local:repo@v1.git",
+				"./local/repo?token=snapshot", "example.invalid:repo?token=snapshot",
+				"ssh://example.invalid/repo?token=snapshot", "file:///neutral/repo?token=snapshot",
+			]
+			for index: int in range(allowed.size()):
+				var name := "allowed-" + str(index)
+				provider.call("test_create_remote", name, allowed[index])
+				passed = provider.call("test_get_remotes").has(name) and passed
+		"security_origins":
+			var pairs: Array = [
+				["https://[2001:db8::1]/repo", "https://2001:db8::1/repo"],
+				["https://[2001:db8::1]:444/repo", "https://2001:db8::1:444/repo"],
+				["https://%65xample.invalid/repo", "https://example.invalid/repo"],
+				["https://example.invalid:/repo", "https://example.invalid:443/repo"],
+				["https://example.invalid./repo", "HTTPS://EXAMPLE.invalid:0443/repo"],
+				["example.invalid:repo with spaces", "ssh://example.invalid/repo"],
+			]
+			var checks: Array = []
+			for pair: Array in pairs:
+				var actual: Array = provider.call("test_credential_requests", pair[0], [pair[1]], 1, "")
+				checks.append(actual == [true])
+				passed = actual == [true] and passed
+			for changed: String in ["http://[2001:db8::1]/repo", "https://[2001:db8::2]/repo", "https://[2001:db8::1]:444/repo"]:
+				passed = provider.call("test_credential_requests", "https://[2001:db8::1]/repo", [changed], 1, "") == [false] and passed
+			result["checks"] = checks
+		"security_overlap":
+			provider.call("test_set_credentials", "abc", "abcdefSECRET", "", "", "")
+			passed = provider.call("test_sanitize_output", "abcdefSECRET abc abcdefSECRET") == "[redacted] [redacted] [redacted]" and passed
+			provider.call("test_set_credentials", "aba", "bab", "", "", "")
+			passed = provider.call("test_sanitize_output", "ababa") == "[redacted]" and passed
+		"security_long_output":
+			for length: int in [64, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]:
+				var text := "x".repeat(length)
+				passed = provider.call("test_sanitize_output", text) == text and passed
+				provider.call("test_progress_packets", [text, "\n"])
+				var sensitive := "ssh://" + text + ":LONG_SECRET@host/repo?token=QUERY_SECRET"
+				var safe: String = provider.call("test_sanitize_output", sensitive)
+				passed = not safe.contains("LONG_SECRET") and not safe.contains("QUERY_SECRET") and passed
+				provider.call("test_progress_packets", [sensitive, "\n"])
+			var packets: Array[String] = []
+			for index: int in range(1024):
+				packets.append("x".repeat(64))
+			packets.append("fixture-password\n")
+			provider.call("test_progress_packets", packets)
+			packets.clear()
+			for index: int in range(1024):
+				packets.append("x".repeat(60))
+			packets.append("fixture-")
+			packets.append("password\n")
+			provider.call("test_progress_packets", packets)
+	result["passed"] = passed
 	return result

@@ -183,26 +183,31 @@ GitPlugin::GitPlugin() {
 }
 
 bool GitPlugin::check_errors(int error, godot::String function, godot::String file, int line, godot::String message, const std::vector<git_error_code> &ignores) {
-	const git_error *lg2err;
+	try {
+		const git_error *lg2err;
 
-	if (error == 0) {
-		return false;
-	}
-
-	for (auto &ig : ignores) {
-		if (error == ig) {
+		if (error == 0) {
 			return false;
 		}
-	}
 
-	message = message + ".";
-	if ((lg2err = git_error_last()) != nullptr && lg2err->message != nullptr) {
-		message = message + " Error " + godot::String::num_int64(error) + ": ";
-		message = message + godot::String::utf8(lg2err->message);
-	}
+		for (auto &ig : ignores) {
+			if (error == ig) {
+				return false;
+			}
+		}
 
-	godot::UtilityFunctions::push_error("GitPlugin: ", sanitize_git_output(message, &creds), " in ", sanitize_git_output(file.get_file() + ":" + function, &creds), "#L", line);
-	return true;
+		message = message + ".";
+		if ((lg2err = git_error_last()) != nullptr && lg2err->message != nullptr) {
+			message = message + " Error " + godot::String::num_int64(error) + ": ";
+			message = message + godot::String::utf8(lg2err->message);
+		}
+
+		godot::UtilityFunctions::push_error("GitPlugin: ", sanitize_git_output(message, &creds), " in ", sanitize_git_output(file.get_file() + ":" + function, &creds), "#L", line);
+		return true;
+	} catch (...) {
+		// Omit diagnostics when safe formatting fails.
+		return error != 0;
+	}
 }
 
 void GitPlugin::_set_credentials(const godot::String &username, const godot::String &password, const godot::String &ssh_public_key_path, const godot::String &ssh_private_key_path, const godot::String &ssh_passphrase) {
