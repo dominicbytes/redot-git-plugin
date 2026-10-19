@@ -17,7 +17,9 @@ the editor Git provider; Redot owns the Version Control UI.
    also run `tests/run_private_transport_tests.py` and confirm its sentinel
    scan is clean.
 7. Run `scripts/audit_binary.py` for every production binary built on the
-   current host.
+   current host. Save each result with `--record <records-dir>/<platform-id>.json`
+   and pass that directory to packaging with `--audit-records <records-dir>`.
+   Release records must match the current auditor version and binary SHA-256.
 8. For release changes, run `tests/run_export_isolation.py` with the exact
    Redot editor/template and confirm the package command fails closed if any
    declared platform is missing.

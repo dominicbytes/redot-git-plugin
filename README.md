@@ -148,13 +148,36 @@ The release workflow combines platform artifacts only after all builds and
 the API gate pass. To package an already assembled addon locally:
 
 ```shell
-python scripts/package_release.py --input-root <path-to/addons/godot-git-plugin> --output-dir dist
+python scripts/package_release.py --input-root <assembled-addon> --audit-records <records-dir> --output-dir dist
 ```
 
 The tool creates a deterministic ZIP, manifest, and checksum sidecar. It
 requires Windows x86-64, Linux x86-64, and macOS universal binaries by
-default. `--allow-partial` is only for visibly named local audit packages; a
-partial archive is not a release.
+default. Each platform also requires a JSON record written by the current
+binary auditor, bound to that library's SHA-256, size, and platform. For example:
+
+```shell
+python scripts/audit_binary.py --platform windows --binary <production-library> --record <records-dir>/windows-x86_64.json
+```
+
+Use `linux-x86_64.json` and `macos-universal.json` for the other records.
+The auditor validates library format, architecture, defined exported entry
+point, system dependencies, test markers, and absolute build paths without
+requiring host-specific binary inspection tools. The package command repeats
+these checks and scans every archived file, including documents, for paths
+and test markers. Diagnostics identify offsets and categories with values
+redacted. Archive entries, manifests, and checksums use case-sensitive POSIX
+name ordering on every host.
+
+`--allow-partial` permits missing platforms in visibly named local packages.
+To omit audit records locally, explicitly use both flags:
+
+```shell
+./release.sh --input-root <assembled-addon> --output-dir dist --allow-partial --skip-audit-records
+```
+
+All binary and payload checks still run. Such packages have a partial name and
+record their unverified audit-record status; they are not releases.
 
 ## Limitations
 
