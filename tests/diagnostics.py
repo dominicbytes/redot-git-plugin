@@ -166,7 +166,7 @@ def controlled_environment() -> dict[str, str]:
     profile = directory / "profile"
     hooks = directory / "hooks"
     templates = directory / "templates"
-    for path in (profile, hooks, templates, profile / "xdg"):
+    for path in (profile, hooks, templates, profile / "xdg", profile / "appdata", profile / "localappdata"):
         path.mkdir(parents=True, exist_ok=True)
     empty = directory / "empty.gitconfig"
     empty.touch()
@@ -174,6 +174,7 @@ def controlled_environment() -> dict[str, str]:
     env.update({
         "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": str(empty),
         "HOME": str(profile), "USERPROFILE": str(profile), "XDG_CONFIG_HOME": str(profile / "xdg"),
+        "APPDATA": str(profile / "appdata"), "LOCALAPPDATA": str(profile / "localappdata"),
         "GIT_CONFIG_COUNT": "4",
         "GIT_CONFIG_KEY_0": "core.autocrlf", "GIT_CONFIG_VALUE_0": "false",
         "GIT_CONFIG_KEY_1": "core.hooksPath", "GIT_CONFIG_VALUE_1": str(hooks),

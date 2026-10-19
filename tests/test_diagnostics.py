@@ -311,6 +311,14 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(env["GIT_CONFIG_NOSYSTEM"], "1")
         self.assertEqual(env["GIT_CONFIG_VALUE_2"], "false")
 
+    def test_controlled_environment_isolates_windows_editor_data(self):
+        with patch.dict(os.environ, {"APPDATA": "shared-roaming", "LOCALAPPDATA": "shared-local"}):
+            env = controlled_environment()
+        for key, host in (("APPDATA", "shared-roaming"), ("LOCALAPPDATA", "shared-local")):
+            self.assertNotEqual(env[key], host)
+            self.assertEqual(Path(env[key]).parent, Path(env["USERPROFILE"]))
+            self.assertTrue(Path(env[key]).is_dir())
+
     @unittest.skipUnless(shutil.which("git"), "Git is required for environment integration")
     def test_host_git_configuration_cannot_break_fixture_commit(self):
         with tempfile.TemporaryDirectory() as temporary:
