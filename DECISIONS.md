@@ -15,7 +15,7 @@
 - Date: 2026-08-10
 - Status: accepted
 - Decision: Replace the godot-cpp gitlink with
-  `Redot-Engine/redot-cpp@598ec78e86b2c240a023f6de13daba70f7de8610`
+  `dominicbytes/redot-cpp@9e7161bd7a3572a36ffa93109e73169861e9f834`
   and verify the engine commit's API files by SHA-256.
 - Context: The official editor's API dump commands crash in this build. The
   exact engine-source API, generated redot-cpp binding, 23-method comparison,
