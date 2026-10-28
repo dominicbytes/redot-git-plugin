@@ -35,8 +35,8 @@ The reproducibility epoch is `1785436021`, the provider commit time in UTC.
 | Linux asset SHA-256 | `f474d890806c41af15513cf5a8600243e241882e11b68dbb95660e3465b5b1e4` |
 | macOS release asset | `Redot_v26.2-stable_macos_universal.zip` |
 | macOS asset SHA-256 | `128cb7bca69b95a3998a84e72b0990a302ce5b1919dfb56cfdc709c2c87925ae` |
-| redot-cpp branch | `26.2` |
-| redot-cpp commit | `598ec78e86b2c240a023f6de13daba70f7de8610` |
+| redot-cpp source | `https://github.com/dominicbytes/redot-cpp` |
+| redot-cpp commit | `9e7161bd7a3572a36ffa93109e73169861e9f834` |
 
 The exact API evidence is stored under
 `api/redot-26.2/4f5b14abade2239104847d03d8f9056e4467cfcd/`.
@@ -61,7 +61,8 @@ The exact API evidence is stored under
 
 The exact runtime-target evidence is under
 `api/redot-26.3/85e5203945af15755dd2f66cb6fdf7545fd88c0b/`.
-The 26.2 binding/API baseline above is retained unchanged. The pinned
+The 26.2 API baseline above is retained; the owner binding fork adds the Array
+initializer-list constructor fix. The pinned
 redot-cpp cannot generate bindings for 26.3's added Struct variant; do not
 build it against the 26.3 JSON. One binary built on 26.2 supports both editors.
 The comparison verifies both sets of evidence and equality of the complete
@@ -71,7 +72,7 @@ VCS class surface, including the same 23 required methods.
 
 | Dependency | Version in source | Commit | License summary |
 | --- | --- | --- | --- |
-| redot-cpp | Redot 26.2 branch | `598ec78e86b2c240a023f6de13daba70f7de8610` | MIT |
+| redot-cpp | Owner fork, 26.2 API | `9e7161bd7a3572a36ffa93109e73169861e9f834` | MIT |
 | libgit2 | 1.9.7 | `49e408b3208bc3093757a1c2db938d3590f3f412` | GPL-2.0-only with linking exception and bundled notices |
 | libssh2 | 1.11.2_DEV (master, 2026-10-16) | `3209951db4e47ef902db047d12f9f464f835c27e` | BSD-3-Clause |
 | OpenSSL | 3.6.5 | `c8bd5a57108599ac650bbae77fcabe3109dab2e8` | Apache-2.0 for current source, plus bundled legacy notices |

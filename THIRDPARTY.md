@@ -2,7 +2,7 @@
 
 The Redot Git Plugin source code uses the following third-party source code:
 
-1. Redot-Engine/redot-cpp - MIT License - https://github.com/Redot-Engine/redot-cpp/tree/598ec78e86b2c240a023f6de13daba70f7de8610
+1. dominicbytes/redot-cpp - MIT License - https://github.com/dominicbytes/redot-cpp/tree/9e7161bd7a3572a36ffa93109e73169861e9f834
 2. libgit2/libgit2 1.9.7 - GPLv2 with a special Linking Exception - https://github.com/libgit2/libgit2/tree/49e408b3208bc3093757a1c2db938d3590f3f412
 3. libssh2/libssh2 1.11.2_DEV (master, 2026-10-16) - BSD-3-Clause License - https://github.com/libssh2/libssh2/tree/3209951db4e47ef902db047d12f9f464f835c27e
 4. OpenSSL 3.6.5 - Apache License 2.0 - https://github.com/openssl/openssl/tree/c8bd5a57108599ac650bbae77fcabe3109dab2e8
@@ -19,7 +19,7 @@ apply. This fix should be reported upstream; see ADR-0016 in `DECISIONS.md`.
 
 ## License Texts
 
-### Redot-Engine/redot-cpp
+### dominicbytes/redot-cpp
 
 ```
 # MIT License

@@ -109,6 +109,10 @@ the runtime extension list.
 
 ## Building from source
 
+The binding source is `https://github.com/dominicbytes/redot-cpp`, pinned to
+`9e7161bd7a3572a36ffa93109e73169861e9f834`; use the locked submodule, including
+its Array initializer-list constructor fix.
+
 Clone recursively so every pinned dependency is present:
 
 ```shell
